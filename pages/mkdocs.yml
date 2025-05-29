@@ -1,1 +1,60 @@
-site_name: Dream-Trainer
+site_name: Dream Trainer
+site_description: "Composable distributed training framework built around PyTorch DTensor abstractions"
+site_url: https://dream3d.ai/trainer
+repo_url: https://github.com/dream3d/dream-trainer
+edit_uri: edit/main/dream-trainer/pages/docs/
+
+nav:
+  - Home: index.md
+  - Guides:
+      - Getting Started: getting-started.md
+      - Configuration: configuration.md
+      - Trainer Guide: trainer-guide.md
+      - Callbacks: callbacks.md
+      - Parallelism: parallelism.md
+
+# Use the Material for MkDocs theme
+theme:
+  name: material
+  logo: assets/logo.png  # Optional: place logo here
+  favicon: assets/favicon.png  # Optional: place favicon here
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+  features:
+    - navigation.instant
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_generator: "pymdownx.emoji.twemoji"
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+plugins:
+  - search
