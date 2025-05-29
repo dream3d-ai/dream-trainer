@@ -1,9 +1,9 @@
 site_name: "dream-trainer"
-site_url: "https://dream3d-ml.github.io/dream-trainer"
+site_url: "https://dream3d-ai.github.io/dream-trainer"
 site_description: "Dream Trainer"
 site_author: "Dream3D"
 dev_addr: "127.0.0.1:8080"
-repo_url: "https://github.com/dream3d-ml/dream-trainer"
+repo_url: "https://github.com/dream3d-ai/dream-trainer"
 theme:
   name: shadcn
   pygments_style: "github-dark"
