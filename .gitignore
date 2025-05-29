@@ -1,0 +1,23 @@
+# Python-generated files
+*/__pycache__/
+__pycache__/
+*.py[oc]
+.ruff_cache
+
+# models
+**.bin
+**.pkl
+**.pt
+**.pth
+**.safetensors
+**.pkl
+
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+**/.venv/** 
+

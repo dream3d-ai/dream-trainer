@@ -1,0 +1,53 @@
+[project]
+name = "dream-trainer"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Tony Francis", email = "tony@dream3d.com" },
+    { name = "Vikaas Varma", email = "vik@dream3d.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "dist-utils",
+    "loguru>=0.7.3",
+    "torch>=2.7.0",
+    "tqdm>=4.67.1",
+]
+
+[project.optional-dependencies]
+wandb = [
+    "wandb[media]>=0.19.11",
+]
+rich = [
+    "rich>=14.0.0",
+]
+metrics = [
+    "torchmetrics>=1.7.1",
+]
+torchao = [
+    "torchao>=0.11.0",
+]
+torchft = [
+    "torchft",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.11.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+src = ["trainer"]
+line-length = 96
+indent-width = 4
+lint.dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+lint.ignore = ["F722", "E731", "F821", "E741"]
+
+[tool.uv.sources]
+dist-utils = { workspace = true }
+torchft = { git = "https://github.com/pytorch/torchft.git" }
