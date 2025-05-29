@@ -3,6 +3,7 @@
 This guide will help you get up and running with Dream Trainer quickly. We'll cover installation, basic usage, and walk through a complete example.
 
 ## Table of Contents
+
 - [Installation](#installation)
 - [Basic Usage](#basic-usage)
 - [Your First Training Run](#your-first-training-run)
@@ -41,7 +42,7 @@ pip install dream-trainer[torchao]
 pip install dream-trainer[torchft]
 
 # Install all optional dependencies
-pip install dream-trainer[wandb,rich,metrics,torchao,torchft]
+pip install dream-trainer[all]
 ```
 
 ### Development Installation
@@ -72,13 +73,13 @@ class MyTrainer(DreamTrainer):
     def __init__(self, config: DreamTrainerConfig, model: nn.Module):
         super().__init__(config)
         self.model = model
-        
+
     def configure_models(self):
         """Configure your model(s) here"""
         # Models are automatically moved to the correct device
         # and wrapped with distributed training wrappers
         pass
-        
+
     def configure_optimizers(self):
         """Configure optimizer(s)"""
         self.optimizer = AdamW(
@@ -86,7 +87,7 @@ class MyTrainer(DreamTrainer):
             lr=1e-4,
             weight_decay=0.01
         )
-        
+
     def configure_dataloaders(self):
         """Configure train and validation dataloaders"""
         # Example dummy data
@@ -98,7 +99,7 @@ class MyTrainer(DreamTrainer):
             torch.randn(100, 10),
             torch.randint(0, 2, (100,))
         )
-        
+
         train_loader = DataLoader(
             train_data,
             batch_size=32,
@@ -109,38 +110,38 @@ class MyTrainer(DreamTrainer):
             batch_size=32,
             shuffle=False
         )
-        
+
         return train_loader, val_loader
-        
+
     def training_step(self, batch, batch_idx):
         """Define a single training step"""
         inputs, targets = batch
-        
+
         # Forward pass
         outputs = self.model(inputs)
         loss = nn.functional.cross_entropy(outputs, targets)
-        
+
         # Backward pass (handled automatically)
         self.backward(loss)
-        
+
         # Return metrics to log
         return {
             "loss": loss,
             "lr": self.optimizer.param_groups[0]["lr"]
         }
-        
+
     def validation_step(self, batch, batch_idx):
         """Define a single validation step"""
         inputs, targets = batch
-        
+
         # Forward pass
         outputs = self.model(inputs)
         loss = nn.functional.cross_entropy(outputs, targets)
-        
+
         # Calculate accuracy
         preds = outputs.argmax(dim=1)
         accuracy = (preds == targets).float().mean()
-        
+
         return {
             "val_loss": loss,
             "val_accuracy": accuracy
@@ -164,31 +165,31 @@ config = DreamTrainerConfig(
     project="my-ml-project",
     group="classification",
     experiment="baseline-v1",
-    
+
     # Device settings
     device_parameters=DeviceParameters(
         # Distributed training settings
         data_parallel_size=1,  # Number of GPUs for data parallelism
         tensor_parallel_size=1,  # Tensor parallelism degree
         pipeline_parallel_size=1,  # Pipeline parallelism degree
-        
+
         # Performance settings
         compile_model=True,  # Use torch.compile
         param_dtype=torch.bfloat16,  # Mixed precision
     ),
-    
+
     # Training settings
     training_parameters=TrainingParameters(
         n_epochs=10,
         train_batch_size=32,
         gradient_clip_val=1.0,
         checkpoint_activations=False,
-        
+
         # Validation settings
         val_frequency=0.5,  # Validate every half epoch
         num_sanity_val_steps=2,  # Sanity check before training
     ),
-    
+
     # Callbacks
     callbacks=CallbackCollection([
         LoggerCallback(),  # Logs metrics to console/WandB
@@ -317,4 +318,4 @@ If you need help:
 1. Check the [documentation](index.md)
 2. Look at [examples](examples/basic.md)
 3. Open an issue on GitHub
-4. Join our community chat 
+4. Join our community chat
