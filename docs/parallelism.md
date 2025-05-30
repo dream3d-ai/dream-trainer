@@ -186,7 +186,7 @@ class TransformerBlockParallel(ParallelPlan):
     feed_forward: "FeedForward"
     ffn_norm: nn.RMSNorm
 
-    def parallel_plan(self, _):
+    def parallelize_plan(self, _):
         return {
             "attention_norm": sequence_parallel(self.attention_norm),
             "attention": prepare_module_input(
@@ -216,7 +216,7 @@ class TransformerParallel(FullyShard, ParallelPlan):
     output: nn.Linear
     layers: nn.ModuleDict
 
-    def parallel_plan(self, loss_parallel: bool):
+    def parallelize_plan(self, loss_parallel: bool):
         return (
             {
                 "tok_embeddings": rowwise_parallel(
@@ -265,7 +265,6 @@ class MyTrainer(ModelSetupMixin):
    - Choose parallel dimension carefully
    - Consider communication overhead
    - Use with FSDP for maximum memory efficiency
-
 
 ## Context Parallelism
 
