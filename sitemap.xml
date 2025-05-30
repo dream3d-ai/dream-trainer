@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+         <loc>https://dream3d.ai/trainer/</loc>
+         <lastmod>2025-05-30</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/callbacks/</loc>
+         <lastmod>2025-05-30</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/configuration/</loc>
+         <lastmod>2025-05-30</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/getting-started/</loc>
+         <lastmod>2025-05-30</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/parallelism/</loc>
+         <lastmod>2025-05-30</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/trainer-guide/</loc>
+         <lastmod>2025-05-30</lastmod>
+    </url>
+</urlset>
