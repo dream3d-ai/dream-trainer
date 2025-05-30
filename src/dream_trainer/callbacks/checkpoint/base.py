@@ -15,6 +15,17 @@ from ..callback import Callback
 from .types import Checkpoint
 from .utils import find_checkpoints, find_current_checkpoint
 
+try:
+    import torchft  # noqa: F401
+
+    from dream_trainer.trainer.world.fault_tolerant_world import (
+        FaultTolerantWorld,  # type: ignore
+    )
+
+    fault_tolerant_enabled = True
+except ImportError:
+    fault_tolerant_enabled = False
+
 
 class CheckpointCallback(Callback):
     """
@@ -140,6 +151,13 @@ class CheckpointCallback(Callback):
         self.pg = dist.new_group(backend="gloo")
         self._did_resume = False
         self._current_metric = None
+
+        # Setup fault tolerant checkpointing
+        if fault_tolerant_enabled and isinstance(self.trainer.world, FaultTolerantWorld):
+            self.trainer.world.ft_manager.set_state_dict_fns(
+                self.trainer.load_state_dict,
+                self.trainer.state_dict,
+            )
 
     # Load & save for fit
 

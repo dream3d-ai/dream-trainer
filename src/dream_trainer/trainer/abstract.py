@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterable
 
-from dream_trainer.configs import DeviceParameters
+from dream_trainer.configs import DeviceParameters, FaultToleranceParameters
 from dream_trainer.trainer.world import DistributedWorld
 
 if TYPE_CHECKING:
@@ -21,6 +21,7 @@ class AbstractTrainerConfig:
     experiment: str
 
     device_parameters: DeviceParameters
+    fault_tolerance_parameters: FaultToleranceParameters | None = None
 
 
 class AbstractTrainer(ABC):
@@ -41,8 +42,19 @@ class AbstractTrainer(ABC):
         self.experiment = config.experiment
 
         self.device_parameters = config.device_parameters
+        self.fault_tolerance_parameters = config.fault_tolerance_parameters
 
-        self.world = DistributedWorld(config.device_parameters)
+        if (
+            self.fault_tolerance_parameters is not None
+            and self.fault_tolerance_parameters.enable
+        ):
+            from dream_trainer.trainer.world.fault_tolerant_world import FaultTolerantWorld
+
+            self.world = FaultTolerantWorld(
+                self.device_parameters, self.fault_tolerance_parameters
+            )
+        else:
+            self.world = DistributedWorld(self.device_parameters)
 
         # Trainer State:  NOTE: Keep track of these yourself
         self.global_step = 0  # Number of optimizer steps taken

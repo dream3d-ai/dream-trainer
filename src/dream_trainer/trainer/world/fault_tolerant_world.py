@@ -1,4 +1,5 @@
 import datetime as dt
+import os
 
 import dist_util
 import torch
@@ -6,7 +7,6 @@ import torch.distributed.tensor._random
 import torch.distributed.tensor.parallel
 from torch.distributed import ProcessGroup
 from torch.distributed.device_mesh import DeviceMesh
-from typing_extensions import override
 
 from dream_trainer.configs import DeviceParameters, FaultToleranceParameters
 
@@ -27,38 +27,29 @@ except ImportError:
 
 class FaultTolerantWorld(DistributedWorld):
     replicate_pg: ProcessGroup
+    ft_manager: ft.Manager
 
     def __init__(self, config: DeviceParameters, ft_config: FaultToleranceParameters):
         super().__init__(config)
 
+        if not config.dp_replicate > 1:
+            raise ValueError(
+                "Fault tolerant training requires dp_replicate > 1 (HSDP). "
+                "Please set dp_replicate > 1 in the config."
+            )
+
         self.ft_config = ft_config
-        self.group_rank = dist_util.core.get_dist_local_rank()
-        self.group_size = dist_util.core.get_dist_local_world_size()
-
-        self.replica_id = f"{self.ft_config.replica_prefix or 'ft'}_{self.group_rank}"
-
-    @property
-    @override
-    def dp_replicate_enabled(self):
-        return True
-
-    @property
-    @override
-    def dp_size(self):
-        return super().dp_size * self.group_size
-
-    @property
-    @override
-    def dp_rank(self):
-        _dp_size = super().dp_size
-        _dp_rank = super().dp_rank
-        return _dp_size * self.group_rank + _dp_rank
+        self.replica_id = f"{self.ft_config.replica_prefix or os.environ['TORCHELASTIC_RUN_ID']}_{self.group_rank}"
 
     def __del__(self):
         if hasattr(self, "ft_manager"):
             self.ft_manager.shutdown(wait=False)
 
     def setup_ft(self):
+        # Get the group world size and rank from environment variables
+        group_world_size = dist_util.core.get_dist_local_world_size()
+        group_rank = dist_util.core.get_dist_local_rank()
+
         self.ft_pg = ft.ProcessGroupNCCL()
         self.ft_transport = PGTransport(
             self.ft_pg,
@@ -66,18 +57,16 @@ class FaultTolerantWorld(DistributedWorld):
             device=torch.device(self.device_type),
         )
 
-        # TODO: we need to include ft_manager in trainer.state_dict()
-        # when using the CheckpointCallback. Make a FtCheckpointCallback class?
         self.ft_manager = ft.Manager(
             pg=self.ft_pg,
+            rank=group_rank,
+            world_size=group_world_size,
+            replica_id=self.replica_id,
+            checkpoint_transport=self.ft_transport,
             min_replica_size=self.ft_config.min_replica_size,
+            # State dict functions are set by CheckpointCallback
             load_state_dict=None,
             state_dict=None,
-            use_async_quorum=False,  # TODO: add async quorum
-            replica_id=self.replica_id,
-            rank=self.group_rank,
-            world_size=self.group_size,
-            checkpoint_transport=self.ft_transport,
         )
 
         self.replicate_pg = ManagedProcessGroup(self.ft_manager)
