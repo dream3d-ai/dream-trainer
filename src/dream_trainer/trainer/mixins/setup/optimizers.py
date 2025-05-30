@@ -1,9 +1,9 @@
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import override
 
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
+from typing_extensions import override
 
 from dream_trainer.trainer.abstract import AbstractTrainer, AbstractTrainerConfig
 from dream_trainer.utils import logger

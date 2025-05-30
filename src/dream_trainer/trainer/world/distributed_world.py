@@ -4,7 +4,7 @@ import math
 import os
 from typing import Callable, Iterable, cast
 
-import dist_utils
+import dist_util
 import torch
 import torch._inductor.config
 import torch.distributed
@@ -147,7 +147,7 @@ class DistributedWorld:
 
     @property
     def is_global_zero(self):
-        return dist_utils.core.is_rank_zero()
+        return dist_util.core.is_rank_zero()
 
     @property
     def dp_size(self) -> int:

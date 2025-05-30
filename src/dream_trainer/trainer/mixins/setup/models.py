@@ -1,7 +1,7 @@
 from abc import abstractmethod
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Callable, override
+from typing import Any, Callable
 
 import torch
 import torch.nn as nn
@@ -9,6 +9,7 @@ from torch.distributed._composable.replicate import DDP as DDPModule
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import FSDPModule
 from torch.distributed.pipelining.schedules import _PipelineSchedule
+from typing_extensions import override
 
 from dream_trainer.trainer.abstract import AbstractTrainer, AbstractTrainerConfig
 from dream_trainer.utils import logger

@@ -1,7 +1,8 @@
 import os
-from typing import Any, Callable, override
+from typing import Any, Callable
 
 import torch
+from typing_extensions import override
 
 from dream_trainer.trainer.mixins.loggers import LoggerMixin
 

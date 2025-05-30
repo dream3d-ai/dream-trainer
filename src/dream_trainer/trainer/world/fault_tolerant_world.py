@@ -1,12 +1,12 @@
 import datetime as dt
-from typing import override
 
-import dist_utils
+import dist_util
 import torch
 import torch.distributed.tensor._random
 import torch.distributed.tensor.parallel
 from torch.distributed import ProcessGroup
 from torch.distributed.device_mesh import DeviceMesh
+from typing_extensions import override
 
 from dream_trainer.configs import DeviceParameters, FaultToleranceParameters
 
@@ -32,8 +32,8 @@ class FaultTolerantWorld(DistributedWorld):
         super().__init__(config)
 
         self.ft_config = ft_config
-        self.group_rank = dist_utils.core.get_dist_local_rank()
-        self.group_size = dist_utils.core.get_dist_local_world_size()
+        self.group_rank = dist_util.core.get_dist_local_rank()
+        self.group_size = dist_util.core.get_dist_local_world_size()
 
         self.replica_id = f"{self.ft_config.replica_prefix or 'ft'}_{self.group_rank}"
 

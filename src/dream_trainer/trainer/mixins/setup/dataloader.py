@@ -1,8 +1,9 @@
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Iterable, override
+from typing import Iterable
 
 from torch.utils.data import DataLoader
+from typing_extensions import override
 
 from dream_trainer.trainer.abstract import AbstractTrainer, AbstractTrainerConfig
 from dream_trainer.utils import logger

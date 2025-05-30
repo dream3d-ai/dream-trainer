@@ -1,10 +1,11 @@
 import warnings
-from typing import cast, override
+from typing import cast
 
 import torch
 import torch.nn as nn
 from torch.distributed.fsdp import FSDPModule
 from torch.optim import Optimizer
+from typing_extensions import override
 
 from dream_trainer.trainer.mixins.quantize import QuantizeMixin
 from dream_trainer.utils import logger

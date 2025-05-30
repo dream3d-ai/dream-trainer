@@ -1,4 +1,6 @@
-from typing import Literal, override
+from typing import Literal
+
+from typing_extensions import override
 
 from dream_trainer.trainer.mixins.loggers import WandBLoggerMixin
 

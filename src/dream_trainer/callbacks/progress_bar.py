@@ -1,7 +1,8 @@
 import time
-from typing import Any, MutableMapping, override
+from typing import Any, MutableMapping
 
 from tqdm import tqdm
+from typing_extensions import override
 
 from dream_trainer.trainer import BaseTrainer
 

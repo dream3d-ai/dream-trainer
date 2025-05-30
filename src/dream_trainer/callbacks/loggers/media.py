@@ -1,8 +1,9 @@
 from itertools import chain, repeat
-from typing import Annotated, Any, override
+from typing import Annotated, Any
 
 import torch
 from torch import Tensor
+from typing_extensions import override
 
 from dream_trainer.trainer.mixins.loggers import LoggerMixin
 

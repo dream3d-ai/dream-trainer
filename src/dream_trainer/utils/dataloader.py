@@ -1,9 +1,9 @@
 from itertools import repeat
 from typing import Any, Iterable, Iterator, cast
 
-import dist_utils.ops as dist_ops
+import dist_util.ops as dist_ops
 import torch
-from dist_utils.ops import apply_to_collection, broadcast_collection
+from dist_util.ops import apply_to_collection, broadcast_collection
 from torch.distributed.device_mesh import DeviceMesh
 
 from dream_trainer.utils import logger

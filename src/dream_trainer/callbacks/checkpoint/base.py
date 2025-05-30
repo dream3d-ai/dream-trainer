@@ -1,11 +1,12 @@
 import shutil
 from pathlib import Path
-from typing import Any, override
+from typing import Any
 
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint as dcp
 from torch import Tensor
+from typing_extensions import override
 
 from dream_trainer.configs import CheckpointParameters
 from dream_trainer.utils import logger

@@ -1,10 +1,11 @@
 import fnmatch
 import os
 from dataclasses import dataclass, field
-from typing import Any, Literal, override
+from typing import Any, Literal
 
 import torch.nn as nn
 from torch import Tensor
+from typing_extensions import override
 
 from dream_trainer.configs.logger import WandbLoggingParameters
 from dream_trainer.utils.common import background

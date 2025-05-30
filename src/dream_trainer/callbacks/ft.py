@@ -1,8 +1,9 @@
-from typing import cast, override
+from typing import cast
 
 import torch.distributed as dist
 from torch.distributed.distributed_c10d import ReduceOp
 from torch.distributed.fsdp import FSDPModule
+from typing_extensions import override
 
 from dream_trainer.configs import FaultToleranceParameters
 from dream_trainer.trainer.world import FaultTolerantWorld

@@ -1,7 +1,8 @@
-from typing import Iterable, override
+from typing import Iterable
 
 import torch.nn as nn
 from tqdm import tqdm
+from typing_extensions import override
 
 from dream_trainer.trainer.abstract import AbstractTrainer
 from dream_trainer.utils import logger

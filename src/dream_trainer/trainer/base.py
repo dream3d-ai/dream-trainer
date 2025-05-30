@@ -4,14 +4,15 @@ import warnings
 from abc import abstractmethod
 from dataclasses import dataclass
 from itertools import repeat
-from typing import TYPE_CHECKING, Any, Iterable, cast, override
+from typing import TYPE_CHECKING, Any, Iterable
 
-import dist_utils.ops as dist_ops
+import dist_util.ops as dist_ops
 import torch
 import torch.nn as nn
 from torch.distributed._composable.replicate import DDP as DDPModule
 from torch.distributed.fsdp import FSDPModule
 from torch.optim.optimizer import Optimizer
+from typing_extensions import override
 
 from dream_trainer.configs.trainer import TrainingParameters
 from dream_trainer.utils import logger

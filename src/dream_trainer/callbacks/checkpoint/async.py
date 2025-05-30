@@ -3,9 +3,9 @@ import shutil
 import threading
 import time
 from concurrent.futures import Future
-from typing import override
 
 import torch.distributed.checkpoint as dcp
+from typing_extensions import override
 
 from dream_trainer.trainer.abstract import AbstractTrainer
 from dream_trainer.utils import logger
