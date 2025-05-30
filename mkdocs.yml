@@ -6,7 +6,7 @@ edit_uri: edit/main/dream-trainer/pages/docs/
 
 nav:
   - Home: index.md
-  - Guides:
+  - Overview:
       - Getting Started: getting-started.md
       - Configuration: configuration.md
       - Trainer Guide: trainer-guide.md
@@ -58,3 +58,7 @@ markdown_extensions:
 
 plugins:
   - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]

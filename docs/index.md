@@ -1,12 +1,11 @@
 # Dream Trainer Documentation
 
-Dream Trainer is a powerful, distributed training framework built exclusively around PyTorch's new DTensor abstractions. It provides a flexible, composable approach to parallel training that lets you focus on your research rather than fighting framework assumptions.
+Dream Trainer is a powerful, distributed training framework built exclusively around PyTorch's new DTensor abstractions. It provides a flexible, composable approach that makes it easy to adopt the latest PyTorch DTensor APIs.
 
 Dream Trainer was created to address these core issues:
 
 - **Boilerplate Overload**: Each parallelism scheme (DDP, FSDP, tensor, pipeline, etc.) requires its own verbose, error-prone setup & configuration that must be applied in the correct order.
-- **Legacy Trainer Limitations**: Most trainers are tightly coupled to old DDP/FSDP APIs and force "zero-config" abstractions—which break down the moment you need anything custom or novel.
-- **Evolving PyTorch APIs**: The introduction of DTensor and new distributed APIs in PyTorch opens up powerful new patterns, but older frameworks aren't designed to take advantage of them.
+- **Legacy Trainer Limitations**: Most trainers are tightly coupled to old DDP/FSDP APIs and "zero-config" abstractions, making debugging harder and preventing them from taking advantage of new DTensor-based distributed patterns. Being DTensor-native makes code simpler and easier to debug.
 - **Complexity in Real Workflows**: Even simple training scripts become unwieldy when mixing advanced parallelism, due to scattered configuration and framework assumptions.
 
 ## 🏗️ Design Principles
@@ -28,6 +27,7 @@ Dream Trainer is built on three core principles:
    - Trainer is a composition of mixins
    - Take what you need, drop the rest
    - Write your own components when needed
+   - Callback system for drop-in modifications to the loop
 
 ## 🌟 Key Features
 
@@ -41,7 +41,7 @@ Dream Trainer provides simple configuration for all PyTorch parallelism schemes:
 - **Context Parallelism (CP)**: Sequence parallelism for extremely long contexts
 - **Pipeline Parallelism (PP)**: Layer pipelining across GPUs / nodes with automatic schedule search
 
-### Other Features
+### Other Features via Callbakcs
 
 - **Checkpointing** DCP-based checkpointing with async checkpoint support
 - **Built-in Fault Tolerance** via torchft
