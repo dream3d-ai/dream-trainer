@@ -55,3 +55,4 @@ lint.ignore = ["F722", "E731", "F821", "E741"]
 
 [tool.uv.sources]
 torchft = { git = "https://github.com/pytorch/torchft.git" }
+dist-util = { workspace = true }

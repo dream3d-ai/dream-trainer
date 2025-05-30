@@ -55,7 +55,7 @@ While PyTorch Lightning, Accelerate and DeepSpeed simplify distributed training,
 
 - **DTensor-native** from day one—every parameter is a `DTensor`, so new sharding layouts appear the moment they land in PyTorch nightly.
 - **Parallel schemes (FSDP2, TP, PP, CP)** are first-class, composable primitives, not bolt-on "plugins".
-- **Mix-and-match** – import only the mixins you need; keep your existing training loop untouched.
+- **Mix-and-match** – DreamTrainer is designed around mixins to maximize composability.
 - **Minimal magic** – no metaclasses, no `LightningModule`; your model remains a plain `nn.Module`.
 
 ## 📚 Documentation Structure

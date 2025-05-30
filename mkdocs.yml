@@ -1,4 +1,4 @@
-site_name: Dream Trainer
+site_name: dream-trainer
 site_description: "Composable distributed training framework built around PyTorch DTensor abstractions"
 site_url: https://dream3d.ai/trainer
 repo_url: https://github.com/dream3d/dream-trainer
