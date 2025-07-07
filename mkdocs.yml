@@ -117,8 +117,6 @@ plugins:
       separator: '[\s\-,:!=\[\]()"/]+|(?!\b)(?=[A-Z][a-z])|\.(?!\d)|&[lg]t;'
       lang:
         - en
-  - minify:
-      minify_html: true
   - mkdocstrings:
       default_handler: python
       handlers:
