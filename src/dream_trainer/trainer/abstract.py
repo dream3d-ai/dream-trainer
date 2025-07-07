@@ -58,6 +58,9 @@ class AbstractTrainer(ABC):
     @abstractmethod
     def named_schedulers(self) -> dict[str, "LRScheduler"] | None: ...
 
+    @abstractmethod
+    def get_module(self, fqn: str) -> "nn.Module": ...
+
     @property
     @abstractmethod
     def train_dataloader(self) -> Iterable: ...

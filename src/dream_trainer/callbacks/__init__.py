@@ -1,5 +1,7 @@
 from .callback import Callback, CallbackCollection, RankZeroCallback
+from .graph_breaks import FindGraphBreaksCallback
 from .loggers import LoggerCallback, MediaLoggerCallback
+from .profile import ProfileCallback
 from .progress_bar import ProgressBar
 
 try:
@@ -27,16 +29,24 @@ try:
 except ImportError:
     pass
 
+try:
+    from .optimize_fsdp import OptimizeFSDP
+except ImportError:
+    pass
+
 __all__ = [
     "Callback",
     "CallbackCollection",
     "RankZeroCallback",
+    "FindGraphBreaksCallback",
     "LoggerCallback",
     "MediaLoggerCallback",
+    "ProfileCallback",
     "TrainerSummary",
     "Fp8Quantization",
     "FaultToleranceCallback",
     "MetricLoggerCallback",
     "ProgressBar",
     "ModelWatchCallback",
+    "OptimizeFSDP",
 ]

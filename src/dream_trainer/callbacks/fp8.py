@@ -43,9 +43,10 @@ class Fp8Quantization(Callback[QuantizeMixin]):
     #############
     @override
     def pre_launch(self):
-        self.trainer.device_parameters.async_tensor_parallel = (
-            self.trainer.device_parameters.compile_model
-        )
+        if not (compile_model := self.trainer.device_parameters.compile_model):
+            logger.warning("Compile model is disabled. Fp8 quantization may be slower.")
+
+        self.trainer.device_parameters.async_tensor_parallel = compile_model
 
         # Suppress warnings about the 'use_reentrant' parameter in torch.utils.checkpoint.
         warnings.filterwarnings(

@@ -4,11 +4,12 @@ import warnings
 from abc import abstractmethod
 from dataclasses import dataclass
 from itertools import repeat
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable, cast
 
 import dist_util.ops as dist_ops
 import torch
 import torch.nn as nn
+from dist_util.ops import apply_to_collection
 from torch.distributed._composable.replicate import DDP as DDPModule
 from torch.distributed.fsdp import FSDPModule
 from torch.optim.optimizer import Optimizer
@@ -18,6 +19,7 @@ from dream_trainer.configs.trainer import TrainingParameters
 from dream_trainer.utils import logger
 from dream_trainer.utils.common import seed_everything, stacked_context
 from dream_trainer.utils.dataloader import (
+    Batch,
     get_train_dataloader_steps,
     get_val_dataloader_steps,
 )
@@ -31,7 +33,7 @@ if TYPE_CHECKING:
 @dataclass(kw_only=True)
 class BaseTrainerConfig(AbstractTrainerConfig):
     training_parameters: TrainingParameters
-    callbacks: "CallbackCollection | None" = None
+    callbacks: "CallbackCollection" = cast("CallbackCollection", None)
 
 
 class BaseTrainer(AbstractTrainer):
@@ -50,10 +52,6 @@ class BaseTrainer(AbstractTrainer):
 
     _num_val_steps: int
     _num_sanity_val_steps: int
-
-    # Iterators
-    _train_iterator: Iterable[Any]
-    _val_iterator: Iterable[Any]
 
     def __init__(self, config: BaseTrainerConfig, *args, **kwargs) -> None:
         super().__init__(config, *args, **kwargs)
@@ -159,14 +157,12 @@ class BaseTrainer(AbstractTrainer):
         self.training = False
         for model in self.named_models().values():
             model.eval()
-        self.world.barrier()
 
     def train(self):
         self.training = True
         for model in self.named_models().values():
             if any(p.requires_grad for p in model.parameters()):
                 model.train()
-        self.world.barrier()
 
     def step(self, model: nn.Module, optimizer: Optimizer) -> torch.Tensor:
         """
@@ -231,7 +227,7 @@ class BaseTrainer(AbstractTrainer):
         (loss / self._num_gradient_accumulation_steps).backward()
 
     @contextlib.contextmanager
-    def no_gradient_sync(self, model: nn.Module):
+    def no_gradient_sync(self, *models: nn.Module):
         """
         Disable gradient sync during accumulation steps
         and mark the final backward for FSDP.
@@ -240,30 +236,41 @@ class BaseTrainer(AbstractTrainer):
             with self.no_gradient_sync(self.model):
                 loss.backward()
         """
-        if self.world.world_size == 1:
-            # If in single process environment, don't sync gradients
+        if self.world.world_size == 1 or self._num_gradient_accumulation_steps == 1:
+            # If no gradient accumulation or in single process environment, don't sync gradients
             yield
             return
 
-        assert isinstance(model, (FSDPModule, DDPModule)), (
-            f"Expected FSDPModule or DDPModule, got {type(model).__name__}"
+        assert all(isinstance(model, (FSDPModule, DDPModule)) for model in models), (
+            f"Expected all modules to be FSDPModule or DDPModule, got {[type(model).__name__ for model in models]}"
+        )
+        distributed_modules = cast(tuple[FSDPModule | DDPModule, ...], models)
+
+        current_accumulation_step = (
+            self.local_batches + 1
+        ) % self._num_gradient_accumulation_steps
+
+        # Only update flags when transitioning between states
+        is_first_accumulation_step = (
+            current_accumulation_step == 1 and not self._is_last_training_batch
+        )
+        is_last_accumulation_step = (
+            current_accumulation_step == 0 or self._is_last_training_batch
         )
 
-        is_last_backward = not self.is_accumulating_gradients
+        if is_first_accumulation_step:
+            # Set requires_gradient_sync to False only on first accumulation step (unless last batch)
+            for model in distributed_modules:
+                model.set_requires_gradient_sync(False)
 
-        # Synchronize gradients only when done accumulating gradients
-        model.set_requires_gradient_sync(is_last_backward)
+        # Set is_last_backward to True on second-to-last step OR if it's the last training batch
+        if is_last_accumulation_step:
+            for model in distributed_modules:
+                model.set_requires_gradient_sync(True)
+                if isinstance(model, FSDPModule):
+                    model.set_is_last_backward(True)
 
-        if isinstance(model, FSDPModule):
-            # FSDP models set is_last_backward when done accumulating gradients
-            model.set_is_last_backward(is_last_backward)
-
-        try:
-            yield
-        finally:
-            # Always restore is_last_backward when we set it
-            if is_last_backward and isinstance(model, FSDPModule):
-                model.set_is_last_backward(False)
+        yield
 
     @torch.no_grad()
     def total_gradient_norm(
@@ -308,6 +315,11 @@ class BaseTrainer(AbstractTrainer):
     # Model Fitting Loop #
     ######################
 
+    def train_context(self):
+        return stacked_context(
+            [self.world.train_context()] + self.callbacks.train_context(self)
+        )
+
     def perform_training_epoch(self):
         if self._num_train_steps <= 0:
             return
@@ -315,14 +327,23 @@ class BaseTrainer(AbstractTrainer):
         self.train()
         self.callbacks.pre_train_epoch(self)
 
-        for batch_idx, batch in zip(range(self._num_train_steps), self._train_iterator):
+        batch_idx = 0
+        for batch in self.train_dataloader:
+            if batch_idx >= self._num_train_steps:
+                break
+
             self._is_last_training_batch = batch_idx == self._num_train_steps - 1
 
+            # Move batch to device, non-blocking
+            batch = apply_to_collection(
+                cast(Batch, batch),
+                function=lambda t: t.to(self.world.device, non_blocking=True),
+                dtype=torch.Tensor,
+            )
+
             # Train Step
-            self.callbacks.pre_train_step(self, batch_idx)
-            with stacked_context(
-                [self.world.train_context()] + self.callbacks.train_context(self)
-            ):
+            self.callbacks.pre_train_step(self, batch, batch_idx)
+            with self.train_context():
                 result = self.training_step(batch, batch_idx)
 
             self.callbacks.post_train_step(self, result, batch_idx)
@@ -331,10 +352,11 @@ class BaseTrainer(AbstractTrainer):
             if not self.is_accumulating_gradients:
                 self._local_step += 1
                 self.global_step += 1
+            batch_idx += 1
 
             # Reduce timeout after first train step for faster signal
             # (assuming lazy init and compilation are finished)
-            if self._local_step == 1:
+            if self._local_step == 1 and not self.is_accumulating_gradients:
                 self.world.set_pg_timeouts(
                     timeout=dt.timedelta(
                         seconds=self.device_parameters.comm.train_timeout_seconds,
@@ -349,27 +371,50 @@ class BaseTrainer(AbstractTrainer):
                 self.perform_validation_epoch()
                 self.train()
 
+        if (batch_idx + 1) < self._num_train_steps:
+            raise RuntimeError(
+                f"Worker {self.world.world_mesh.get_rank() if self.world.world_mesh is not None else 'unknown'} received fewer training batches than expected. "
+                f"Expected {self._num_train_steps} batches, received {batch_idx + 1}"
+            )
+
         self.callbacks.post_train_epoch(self, result)
 
     @torch.no_grad()
     def perform_validation_epoch(self):
-        if self._num_val_steps <= 0 or self._val_iterator is None:
+        if self._num_val_steps <= 0:
             return
 
         self.eval()
 
         # Validation Epoch Start
-
         self.callbacks.pre_validation_epoch(self)
 
         # Validation Epoch Loop
-        for batch_idx, batch in zip(range(self._num_val_steps), self._val_iterator):
-            self.callbacks.pre_validation_step(self, batch_idx)
+        batch_idx = 0
+        for batch in self.val_dataloader:
+            if batch_idx >= self._num_val_steps:
+                break
+
+            # Move batch to device, non-blocking
+            batch = apply_to_collection(
+                cast(Batch, batch),
+                function=lambda t: t.to(self.world.device, non_blocking=True),
+                dtype=torch.Tensor,
+            )
+
+            self.callbacks.pre_validation_step(self, batch, batch_idx)
 
             with stacked_context(self.callbacks.validation_context(self)):
                 result = self.validation_step(batch, batch_idx)
 
             self.callbacks.post_validation_step(self, result, batch_idx)
+            batch_idx += 1
+
+        if (batch_idx + 1) < self._num_val_steps:
+            raise RuntimeError(
+                f"Worker {self.world.world_mesh.get_rank() if self.world.world_mesh is not None else 'unknown'} received fewer validation batches than expected. "
+                f"Expected {self._num_val_steps} batches, received {batch_idx + 1}"
+            )
 
         # Validation Epoch End
         self.callbacks.post_validation_epoch(self, result)
@@ -379,8 +424,11 @@ class BaseTrainer(AbstractTrainer):
         if self.current_epoch > 0:
             return
 
+        # Store num val steps & temporarily override to num sanity val steps
         num_val_steps = self._num_val_steps
         self._num_val_steps = self._num_sanity_val_steps
+
+        # Call validation epoch normally & restore num val steps
         self.perform_validation_epoch()
         self._num_val_steps = num_val_steps
 
@@ -421,10 +469,6 @@ class BaseTrainer(AbstractTrainer):
         assert dist_ops.global_agreement(self._num_sanity_val_steps), (
             "`num_sanity_val_steps` must be the same across all ranks"
         )
-
-        # Create iterators
-        self._train_iterator = iter(self.train_dataloader)
-        self._val_iterator = iter(self.val_dataloader)
 
     def _fit(self):
         self.callbacks.pre_launch(self)

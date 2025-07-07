@@ -48,6 +48,15 @@ def construct_mesh(
     names_and_dims = list(zip(names, dims))
     names_and_dims = [(name, dim) for name, dim in names_and_dims if dim > 1]
 
+    # If running single device as FSDP (or DDP), we add dummy dimensions
+    if len(names_and_dims) == 0:
+        if config.run_single_device_as_fsdp:
+            names_and_dims = [("dp_shard", 1)]
+            logger.info("Running single device as FSDP")
+        elif config.run_single_device_as_ddp:
+            names_and_dims = [("dp_replicate", 1)]
+            logger.info("Running single device as DDP")
+
     filtered_names = [name for name, _ in names_and_dims]
     filtered_dims = [dim for _, dim in names_and_dims]
 
@@ -137,7 +146,7 @@ class DistributedWorld:
         if self.world_mesh is None:
             raise RuntimeError("World mesh not yet initialized. Call `launch` first.")
 
-        if self.world_mesh.size() == 1:
+        if not self.world_mesh.mesh_dim_names:
             return None
 
         try:
@@ -232,12 +241,15 @@ class DistributedWorld:
 
         self.set_pg_timeouts(dt.timedelta(seconds=self.config.comm.init_timeout_seconds))
 
-        if self.config.async_tensor_parallel and (tp_mesh := self.get_mesh("tp")) is not None:
-            # Enable symmetric memory for the TP process group
-            enable_symm_mem_for_group(tp_mesh.get_group().group_name)
-            # Tell torch.compile to enable async-TP
-            torch._inductor.config._micro_pipeline_tp = True
-            logger.info("Enabled Async Tensor Parallelism")
+        if (tp_mesh := self.get_mesh("tp")) is not None:
+            os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
+
+            if self.config.async_tensor_parallel:
+                # Enable symmetric memory for the TP process group
+                enable_symm_mem_for_group(tp_mesh.get_group().group_name)
+                # Tell torch.compile to enable async-TP
+                torch._inductor.config._micro_pipeline_tp = True
+                logger.info("Enabled Async Tensor Parallelism")
 
         logger.info("Launched Distributed World")
 
@@ -491,6 +503,7 @@ class DistributedWorld:
         norm_type: float = 2.0,
         error_if_nonfinite: bool = False,
         foreach: bool | None = None,
+        async_op: bool = False,
     ) -> torch.Tensor:
         """
         Get the total gradient norm of an iterable of parameters.
@@ -534,10 +547,20 @@ class DistributedWorld:
 
         if (pp_mesh := self.get_mesh("pp")) is not None:
             if math.isinf(norm_type):
-                dist.all_reduce(total_norm, op=dist.ReduceOp.MAX, group=pp_mesh.get_group())
+                dist.all_reduce(
+                    total_norm,
+                    op=dist.ReduceOp.MAX,
+                    group=pp_mesh.get_group(),
+                    async_op=async_op,
+                )
             else:
                 total_norm **= norm_type
-                dist.all_reduce(total_norm, op=dist.ReduceOp.SUM, group=pp_mesh.get_group())
+                dist.all_reduce(
+                    total_norm,
+                    op=dist.ReduceOp.SUM,
+                    group=pp_mesh.get_group(),
+                    async_op=async_op,
+                )
                 total_norm **= 1.0 / norm_type
 
         return total_norm

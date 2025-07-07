@@ -3,6 +3,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+import torch
 import torch.nn as nn
 from torch import Tensor
 from typing_extensions import override
@@ -91,6 +92,10 @@ class WandBLoggerMixin(LoggerMixin):
 
     @override
     def log_dict(self, logs: dict[str, Any]):
+        logs = {
+            k: v.float() if isinstance(v, Tensor) and v.dtype == torch.bfloat16 else v
+            for k, v in logs.items()
+        }
         self._wandb.log({"trainer/global_step": self.global_step, **logs})
 
     @override
@@ -157,7 +162,7 @@ class WandBLoggerMixin(LoggerMixin):
         # Convert to uint8 and (C, T, H, W) -> (T, C, H, W)
         videos = [(video * 128 + 128).clip(0, 255).byte() for video in videos]
         videos = [video.permute(1, 0, 2, 3) for video in videos]
-        videos = [video.detach().cpu() for video in videos]
+        videos = [video.to("cpu", non_blocking=True) for video in videos]
 
         _videos = [
             wandb.Video(video.numpy(), caption=caption, format="gif")

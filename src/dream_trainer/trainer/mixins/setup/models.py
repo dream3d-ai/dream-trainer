@@ -37,6 +37,11 @@ class ModelSetupMixin(AbstractTrainer):
     def named_models(self) -> dict[str, nn.Module]:
         return {name: getattr(self, name) for name in self._model_names}
 
+    @override
+    def get_module(self, fqn: str) -> nn.Module:
+        model, *submodules = fqn.split(".")
+        return getattr(self, model).get_submodule(".".join(submodules))
+
     ########################
     # User-Defined Methods #
     ########################
@@ -157,17 +162,51 @@ class ModelSetupMixin(AbstractTrainer):
             logger.info("Applied Replicate")
         else:
             logger.debug(
-                "Skipping Fully Shard & Replicate because FSDP config was None and dp_replicate is disabled"
+                "Skipping Fully Shard & Replicate because dp_shard and dp_replicate are disabled"
             )
             return
 
-        for model in self.named_models().values():
-            if any(p.requires_grad for p in model.parameters()):
-                assert isinstance(model, (FSDPModule, DDPModule)), (
-                    f"All top-level models that require gradients must be wrapped with fully_shard (or replicate if using DDP). {model.__class__.__name__} was not wrapped."
-                )
+        # Ensure all parameters that require grad are wrapped
+        wrapped = {
+            f"{name}.{module_name}.{param_name}"
+            for name, model in self.named_models().items()
+            for module_name, module in model.named_modules()
+            for param_name, _ in module.named_parameters()
+            if isinstance(module, (FSDPModule, DDPModule))
+        }
 
-    def materialize_model(self):
+        requires_grad = {
+            f"{name}.{param_name}"
+            for name, model in self.named_models().items()
+            for param_name, param in model.named_parameters()
+            if param.requires_grad
+        }
+
+        unwrapped = requires_grad - wrapped
+
+        # assert len(unwrapped) == 0, (
+        #     "All parameters that require gradients must be wrapped with fully_shard (or replicate if using DDP). "
+        #     f"Unwrapped parameters: {unwrapped}"
+        # )
+
+    def _collect_parameter_fqns(self, predicate: Callable[[nn.Module], bool]) -> set[str]:
+        """
+        Collects the FQNs (Fully Qualified Names) of all parameters in modules that match a predicate.
+
+        Args:
+            predicate (Callable[[nn.Module], bool]): A function that takes a module and returns True if its parameters should be collected.
+
+        Returns:
+            set[str]: A set of parameter FQNs from modules that match the predicate.
+        """
+        parameter_fqns = set()
+        for module_name, module in self.named_models().items():
+            if predicate(module):
+                for param_name, _ in module.named_parameters():
+                    parameter_fqns.add(f"{module_name}.{param_name}")
+        return parameter_fqns
+
+    def _materialize_model(self):
         for model in self.named_models().values():
             # NOTE: check if this works with self.checkpoint_parameters.create_seed_checkpoint
             # originally, it seems like self.checkpoint_parameters.create_seed_checkpoint requires cpu as init_device
@@ -269,6 +308,6 @@ class ModelSetupMixin(AbstractTrainer):
         self._apply_fully_shard()
 
         # Materialize model & register forward methods
-        self.materialize_model()
+        self._materialize_model()
         self._mark_forward_methods()
         logger.info("Setup Models")

@@ -1,5 +1,5 @@
 import os
-from typing import Any, Callable
+from typing import Any
 
 import torch
 from typing_extensions import override
@@ -14,11 +14,8 @@ def filter_logs(result: dict[str, Any]) -> dict[str, Any]:
     filter_input = lambda value: isinstance(value, (int, float)) or (
         isinstance(value, torch.Tensor) and value.squeeze().ndim == 0
     )
-    to_number: Callable[[torch.Tensor | int | float], float] = (
-        lambda value: value.item() if isinstance(value, torch.Tensor) else value
-    )
 
-    return {k: to_number(v) for k, v in result.items() if filter_input(v)}
+    return {k: v for k, v in result.items() if filter_input(v)}
 
 
 class LoggerCallback(RankZeroCallback[LoggerMixin]):

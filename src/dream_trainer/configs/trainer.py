@@ -103,6 +103,14 @@ class DeviceParameters:
     • "alltoall"  → direct shard-for-shard swap
     """
 
+    ## Debug
+    run_single_device_as_fsdp: bool = False
+    run_single_device_as_ddp: bool = False
+
+    def __post_init__(self):
+        if self.run_single_device_as_fsdp and self.run_single_device_as_ddp:
+            raise ValueError("Cannot run single device as both FSDP and DDP")
+
     @classmethod
     def HSDP(
         cls,
@@ -111,6 +119,7 @@ class DeviceParameters:
         compile_model: bool = True,
         cpu_offload: bool = False,
         checkpoint_activations: bool = False,
+        enable_compiled_autograd: bool = False,
     ) -> "DeviceParameters":
         """
         Hybrid Sharding Parallelism
@@ -131,6 +140,7 @@ class DeviceParameters:
             _dp_shard=dp_shard,
             _context_parallel=1,
             _pipeline_parallel=1,
+            enable_compiled_autograd=enable_compiled_autograd,
         )
 
     @classmethod
@@ -141,6 +151,7 @@ class DeviceParameters:
         compile_model: bool = True,
         cpu_offload: bool = False,
         checkpoint_activations: bool = False,
+        enable_compiled_autograd: bool = False,
     ) -> "DeviceParameters":
         """
         TP within nodes
@@ -179,6 +190,7 @@ class DeviceParameters:
             _dp_replicate=1,
             _context_parallel=1,
             _pipeline_parallel=1,
+            enable_compiled_autograd=enable_compiled_autograd,
         )
 
     @classmethod
@@ -187,6 +199,7 @@ class DeviceParameters:
         cpu_offload: bool = False,
         checkpoint_activations: bool = False,
         compile_model: bool = True,
+        enable_compiled_autograd: bool = False,
     ) -> "DeviceParameters":
         return cls(
             cpu_offload=cpu_offload,
@@ -197,6 +210,7 @@ class DeviceParameters:
             _tensor_parallel=1,
             _context_parallel=1,
             _pipeline_parallel=1,
+            enable_compiled_autograd=enable_compiled_autograd,
         )
 
     @classmethod
@@ -215,6 +229,7 @@ class DeviceParameters:
             _tensor_parallel=1,
             _context_parallel=1,
             _pipeline_parallel=1,
+            async_tensor_parallel=False,
         )
 
     def validate(self):

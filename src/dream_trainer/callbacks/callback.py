@@ -131,12 +131,13 @@ class Callback(Generic[_AbstractTrainer]):
         """
         raise NotImplementedError("This function should never be called")
 
-    def pre_train_step(self, batch_idx: int):
+    def pre_train_step(self, batch: dict[str, Any], batch_idx: int):
         """
         Called at the start of each training step.
 
         Args:
             trainer (FSDP2Trainer): The trainer instance.
+            batch (dict[str, Any]): The current batch.
             batch_idx (int): The index of the current batch.
         """
         raise NotImplementedError("This function should never be called")
@@ -195,7 +196,7 @@ class Callback(Generic[_AbstractTrainer]):
         """
         raise NotImplementedError("This function should never be called")
 
-    def pre_validation_step(self, batch_idx: int):
+    def pre_validation_step(self, batch: dict[str, Any], batch_idx: int):
         """
         Called at the start of each validation step.
 
@@ -258,7 +259,7 @@ class CallbackCollection(dict[str, Callback | RankZeroCallback]):
             ]
 
         super().__init__(callbacks)  # type: ignore
-        self._organize_callbacks()
+        self.refresh()
 
     def initialize(self, trainer: AbstractTrainer):
         for callback in self.values():
@@ -285,7 +286,7 @@ class CallbackCollection(dict[str, Callback | RankZeroCallback]):
         for name, state_dict in state_dicts.items():
             getattr(self[name], "load_state_dict")(state_dict, trainer)
 
-    def _organize_callbacks(self):
+    def refresh(self):
         """
         Organizes callbacks by method name for efficient execution.
         """
@@ -324,7 +325,7 @@ class CallbackCollection(dict[str, Callback | RankZeroCallback]):
     #########################
     # Override dict methods #
     #########################
-    def __deepcopy__(self, memo):
+    def __deepcopy__(self, memo: dict[int, Any]):
         from copy import deepcopy
 
         return CallbackCollection(deepcopy(tuple(self.values()), memo))
@@ -332,33 +333,33 @@ class CallbackCollection(dict[str, Callback | RankZeroCallback]):
     def __repr__(self):
         return f"CallbackCollection({list(self.keys())})"
 
-    def __setitem__(self, key, value):
+    def __setitem__(self, key: str, value: Callback | RankZeroCallback):
         super().__setitem__(key, value)
-        self._organize_callbacks()
+        self.refresh()
 
-    def __delitem__(self, key):
+    def __delitem__(self, key: str):
         super().__delitem__(key)
-        self._organize_callbacks()
+        self.refresh()
 
-    def update(self, *args, **kwargs):
-        super().update(*args, **kwargs)
-        self._organize_callbacks()
+    def update(self, **kwargs: Callback | RankZeroCallback):
+        super().update(**kwargs)
+        self.refresh()
 
     def clear(self):
         super().clear()
-        self._organize_callbacks()
+        self.refresh()
 
-    def pop(self, key, default=None):
+    def pop(self, key: str, default: Callback | RankZeroCallback | None = None):
         value = super().pop(key, default)
-        self._organize_callbacks()
+        self.refresh()
         return value
 
-    def popitem(self):
+    def popitem(self) -> tuple[str, Callback | RankZeroCallback]:
         item = super().popitem()
-        self._organize_callbacks()
+        self.refresh()
         return item
 
-    def setdefault(self, key, default: "Callback | RankZeroCallback"):
+    def setdefault(self, key: str, default: Callback | RankZeroCallback):
         value = super().setdefault(key, default)
-        self._organize_callbacks()
+        self.refresh()
         return value

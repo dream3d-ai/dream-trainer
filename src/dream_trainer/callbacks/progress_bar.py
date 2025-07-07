@@ -80,9 +80,18 @@ class factorized_tqdm(tqdm):
 
 
 class ProgressBar(Callback[BaseTrainer]):
-    def __init__(self, smoothing: float = 0.1, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    """
+    A callback that displays a progress bar for the training and validation loops.
+
+    Args:
+        smoothing: The smoothing factor for the progress bar.
+        metric: The metric to display in the progress bar. If None, no metric is displayed.
+    """
+
+    def __init__(self, smoothing: float = 0.1, metric: str | None = None):
+        super().__init__()
         self.smoothing = smoothing
+        self.metric = metric
 
     @override
     def pre_fit(self):
@@ -135,7 +144,13 @@ class ProgressBar(Callback[BaseTrainer]):
         )
 
     @override
-    def post_train_step(self, *_):
+    def post_train_step(self, result: dict[str, Any], batch_idx: int):
+        if self.metric is not None:
+            if self.metric in result:
+                self.training_tqdm.set_postfix({self.metric: f"{result[self.metric]:.3f}"})
+            else:
+                self.training_tqdm.set_postfix({})
+
         self.training_tqdm.update(1 / self.trainer._num_gradient_accumulation_steps)
 
         self.training_tqdm._start_time = time.perf_counter()
