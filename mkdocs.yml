@@ -52,10 +52,6 @@ nav:
           - World Management: api/utilities/world.md
           - Data Utilities: api/utilities/data.md
           - Common Utilities: api/utilities/common.md
-  - Migration Guides:
-      - From PyTorch Lightning: migration/from-lightning.md
-      - From HuggingFace: migration/from-huggingface.md
-      - From DeepSpeed: migration/from-deepspeed.md
   - Community:
       - Contributing: contributing.md
       - FAQ: faq.md
@@ -222,3 +218,7 @@ extra_javascript:
   - javascripts/mathjax.js
   - https://polyfill.io/v3/polyfill.min.js?features=es6
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+# Watch for changes in includes directory
+watch:
+  - includes

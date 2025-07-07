@@ -6,7 +6,7 @@ Dream Trainer provides comprehensive checkpointing functionality through the `Ch
 
 The base checkpoint callback that handles synchronous checkpointing:
 
-::: dream_trainer.callbacks.CheckpointCallback
+::: dream_trainer.callbacks.checkpoint.base.CheckpointCallback
     options:
       show_source: true
       show_bases: false
@@ -27,7 +27,7 @@ The base checkpoint callback that handles synchronous checkpointing:
 
 For improved performance with asynchronous saving:
 
-::: dream_trainer.callbacks.AsyncCheckpointCallback
+::: dream_trainer.callbacks.checkpoint.async_checkpoint.AsyncCheckpointCallback
     options:
       show_source: true
       show_bases: false

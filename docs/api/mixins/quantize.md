@@ -39,63 +39,37 @@ The `QuantizeMixin` enables:
 
 Dream Trainer provides several pre-built quantization filters:
 
-### QuantizeModuleTypesFilter
+### ExcludeModuleByName
 
-::: dream_trainer.trainer.mixins.QuantizeModuleTypesFilter
+::: dream_trainer.trainer.mixins.ExcludeModuleByName
     options:
-      show_source: false
+      show_source: true
+      show_bases: false
 
-Filters modules based on their type:
+### ExcludeSubmodules
 
-```python
-# Quantize only Linear and Conv2d layers
-filter = QuantizeModuleTypesFilter([nn.Linear, nn.Conv2d])
-```
-
-### QuantizeModuleSizeFilter
-
-::: dream_trainer.trainer.mixins.QuantizeModuleSizeFilter
+::: dream_trainer.trainer.mixins.ExcludeSubmodules
     options:
-      show_source: false
-
-Filters modules based on parameter count:
-
-```python
-# Only quantize modules with > 1M parameters
-filter = QuantizeModuleSizeFilter(min_size=1_000_000)
-```
-
-### QuantizeExcludeModulesFilter
-
-::: dream_trainer.trainer.mixins.QuantizeExcludeModulesFilter
-    options:
-      show_source: false
-
-Excludes specific modules by name:
-
-```python
-# Exclude embeddings and output layers from quantization
-filter = QuantizeExcludeModulesFilter([
-    "model.embeddings",
-    "model.lm_head",
-    "model.cls_head"
-])
-```
+      show_source: true
+      show_bases: false
 
 ## Usage Examples
 
 ### Basic Quantization Setup
 
 ```python
-from dream_trainer.trainer.mixins import QuantizeMixin, QuantizeModuleTypesFilter
+from dream_trainer.trainer.mixins import QuantizeMixin, ExcludeModuleByName
 import torch.nn as nn
 
 class MyTrainer(BaseTrainer, QuantizeMixin):
     def quantize_module_filters(self):
-        # Define which modules to quantize for each model
+        # Exclude specific modules from quantization
         return {
-            "model": QuantizeModuleTypesFilter([nn.Linear, nn.Conv2d]),
-            "auxiliary_model": QuantizeModuleTypesFilter([nn.Linear])
+            "model": ExcludeModuleByName([
+                "model.embeddings.word_embeddings",
+                "model.embeddings.position_embeddings",
+                "model.lm_head"
+            ])
         }
     
     def setup(self):
@@ -110,6 +84,20 @@ class MyTrainer(BaseTrainer, QuantizeMixin):
             pass
 ```
 
+### Using ExcludeSubmodules Filter
+
+```python
+def quantize_module_filters(self):
+    # Exclude entire submodule trees from quantization
+    return {
+        "model": ExcludeSubmodules([
+            "model.embeddings",  # Excludes all embedding layers
+            "model.head",        # Excludes output head
+            "model.encoder.layer.0",  # Exclude first encoder layer
+        ])
+    }
+```
+
 ### Combining Filters
 
 Filters can be combined using the `+` operator:
@@ -117,11 +105,16 @@ Filters can be combined using the `+` operator:
 ```python
 def quantize_module_filters(self):
     # Combine multiple filters - module must pass ALL filters
-    type_filter = QuantizeModuleTypesFilter([nn.Linear])
-    size_filter = QuantizeModuleSizeFilter(min_size=1_000_000)
-    exclude_filter = QuantizeExcludeModulesFilter(["model.embeddings"])
+    exclude_by_name = ExcludeModuleByName([
+        "model.embeddings.word_embeddings",
+        "model.lm_head"
+    ])
+    exclude_submodules = ExcludeSubmodules([
+        "model.encoder.layer.0",  # Skip first layer
+        "model.encoder.layer.23"  # Skip last layer
+    ])
     
-    combined_filter = type_filter + size_filter + exclude_filter
+    combined_filter = exclude_by_name + exclude_submodules
     
     return {"model": combined_filter}
 ```
@@ -213,8 +206,8 @@ Complete example using FP8 quantization for efficient training:
 ```python
 from dream_trainer.trainer.mixins import (
     QuantizeMixin, 
-    QuantizeModuleTypesFilter,
-    QuantizeModuleSizeFilter
+    ExcludeModuleByName,
+    ExcludeSubmodules
 )
 import transformer_engine.pytorch as te
 
@@ -230,12 +223,12 @@ class FP8Trainer(BaseTrainer, QuantizeMixin):
         )
     
     def quantize_module_filters(self):
-        # Quantize large linear layers
+        # Exclude embedding and output layers from quantization
         return {
-            "model": (
-                QuantizeModuleTypesFilter([te.Linear]) +
-                QuantizeModuleSizeFilter(min_size=1_000_000)
-            )
+            "model": ExcludeModuleByName([
+                "model.word_embeddings",
+                "model.output_layer"
+            ])
         }
     
     def training_step(self, batch, batch_idx):
@@ -299,13 +292,12 @@ Combine quantization with other memory-saving techniques:
 ```python
 class MemoryEfficientTrainer(BaseTrainer, QuantizeMixin, SetupMixin):
     def quantize_module_filters(self):
-        # Aggressive quantization for large models
+        # Exclude critical layers from quantization
         return {
-            "model": QuantizeModuleTypesFilter([
-                nn.Linear,
-                nn.Conv2d,
-                nn.LayerNorm,
-                nn.BatchNorm2d
+            "model": ExcludeSubmodules([
+                "model.embeddings",
+                "model.layer_norm",
+                "model.output"
             ])
         }
     

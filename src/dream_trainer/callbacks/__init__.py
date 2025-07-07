@@ -1,4 +1,5 @@
 from .callback import Callback, CallbackCollection, RankZeroCallback
+from .checkpoint import AsyncCheckpointCallback, CheckpointCallback
 from .graph_breaks import FindGraphBreaksCallback
 from .loggers import LoggerCallback, MediaLoggerCallback
 from .profile import ProfileCallback
@@ -38,6 +39,8 @@ __all__ = [
     "Callback",
     "CallbackCollection",
     "RankZeroCallback",
+    "CheckpointCallback",
+    "AsyncCheckpointCallback",
     "FindGraphBreaksCallback",
     "LoggerCallback",
     "MediaLoggerCallback",
