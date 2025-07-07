@@ -32,6 +32,19 @@ if TYPE_CHECKING:
 
 @dataclass(kw_only=True)
 class BaseTrainerConfig(AbstractTrainerConfig):
+    """
+    Configuration class for BaseTrainer.
+
+    This dataclass holds all configuration parameters needed to initialize
+    and run a BaseTrainer instance.
+
+    Attributes:
+        training_parameters: Configuration for training hyperparameters including
+            epochs, batch size, gradient accumulation, validation frequency, etc.
+        callbacks: Collection of callbacks to execute during training lifecycle.
+            If None, an empty CallbackCollection will be created.
+    """
+
     training_parameters: TrainingParameters
     callbacks: "CallbackCollection" = cast("CallbackCollection", None)
 
@@ -54,6 +67,14 @@ class BaseTrainer(AbstractTrainer):
     _num_sanity_val_steps: int
 
     def __init__(self, config: BaseTrainerConfig, *args, **kwargs) -> None:
+        """
+        Initialize the BaseTrainer.
+
+        Args:
+            config: Configuration object containing training parameters and callbacks.
+            *args: Additional positional arguments passed to parent class.
+            **kwargs: Additional keyword arguments passed to parent class.
+        """
         super().__init__(config, *args, **kwargs)
 
         self.training_parameters = config.training_parameters
@@ -74,6 +95,20 @@ class BaseTrainer(AbstractTrainer):
     ###########################
 
     def state_dict(self) -> dict[str, Any]:
+        """
+        Return the complete state dictionary of the trainer.
+
+        This method captures the entire training state including:
+        - Trainer metadata (global step, current epoch, callbacks state)
+        - All model states
+        - All optimizer states
+        - All scheduler states
+        - Dataloader states (if stateful)
+
+        Returns:
+            dict[str, Any]: A dictionary containing the complete trainer state
+                that can be used to resume training from a checkpoint.
+        """
         return {
             "trainer": {
                 "global_step": self.global_step,
@@ -96,6 +131,23 @@ class BaseTrainer(AbstractTrainer):
         }
 
     def load_state_dict(self, state_dict: dict[str, Any], strict: bool = True) -> None:
+        """
+        Load a complete state dictionary into the trainer.
+
+        This method restores the entire training state from a checkpoint,
+        including trainer metadata, model states, optimizer states, scheduler states,
+        and dataloader states.
+
+        Args:
+            state_dict: Dictionary containing the complete trainer state,
+                typically obtained from a previous call to state_dict().
+            strict: If True, raises ValueError when state_dict contains keys
+                that don't match the current trainer setup. If False, logs
+                warnings for mismatched keys instead.
+
+        Raises:
+            ValueError: If strict=True and state_dict contains unexpected keys.
+        """
         # Load Trainer State
         trainer_state = state_dict.pop("trainer")
         self.global_step = trainer_state.pop("global_step")
@@ -129,6 +181,15 @@ class BaseTrainer(AbstractTrainer):
 
     @override
     def fit(self):
+        """
+        Execute the complete training pipeline.
+
+        This is the main entry point for training. It handles the entire training
+        lifecycle including setup, training loops, validation, and cleanup.
+
+        The method ensures proper cleanup by destroying the distributed process
+        group in the finally block, even if training is interrupted.
+        """
         try:
             self._fit()
         finally:
@@ -143,10 +204,40 @@ class BaseTrainer(AbstractTrainer):
 
     @abstractmethod
     def training_step(self, batch: dict[str, Any], batch_idx: int) -> dict[str, Any]:
+        """
+        Execute a single training step.
+
+        This method should implement the forward pass, loss computation,
+        and backward pass for a single batch of training data.
+
+        Args:
+            batch: Dictionary containing the batch data, typically with keys
+                like 'input', 'target', etc.
+            batch_idx: Index of the current batch within the epoch.
+
+        Returns:
+            dict[str, Any]: Dictionary containing at minimum the computed loss
+                and any other metrics or values to log.
+        """
         pass
 
     @abstractmethod
     def validation_step(self, batch: dict[str, Any], batch_idx: int) -> dict[str, Any]:
+        """
+        Execute a single validation step.
+
+        This method should implement the forward pass and metric computation
+        for a single batch of validation data. No gradients should be computed.
+
+        Args:
+            batch: Dictionary containing the batch data, typically with keys
+                like 'input', 'target', etc.
+            batch_idx: Index of the current batch within the validation epoch.
+
+        Returns:
+            dict[str, Any]: Dictionary containing validation metrics and any
+                other values to log.
+        """
         pass
 
     #######################
@@ -154,11 +245,32 @@ class BaseTrainer(AbstractTrainer):
     #######################
 
     def eval(self):
+        """
+        Set the trainer and all models to evaluation mode.
+
+        This method:
+        - Sets the trainer's training flag to False
+        - Calls eval() on all registered models
+
+        This should be called before validation or inference to disable
+        dropout, batch normalization updates, and other training-specific
+        behaviors.
+        """
         self.training = False
         for model in self.named_models().values():
             model.eval()
 
     def train(self):
+        """
+        Set the trainer and models to training mode.
+
+        This method:
+        - Sets the trainer's training flag to True
+        - Calls train() on all registered models that have trainable parameters
+
+        Models without any parameters requiring gradients are kept in eval mode
+        to avoid unnecessary computation.
+        """
         self.training = True
         for model in self.named_models().values():
             if any(p.requires_grad for p in model.parameters()):
@@ -207,6 +319,19 @@ class BaseTrainer(AbstractTrainer):
 
     @contextlib.contextmanager
     def loss_parallel(self):
+        """
+        Context manager for loss parallelism.
+
+        This provides a context where loss computation can be parallelized
+        with tensor parallelism on dim=-1.
+
+        Yields:
+            None: Context manager for loss parallel computation.
+
+        Example:
+            with self.loss_parallel():
+                loss = self.compute_loss(outputs, targets)
+        """
         with self.world.loss_parallel():
             yield
 
@@ -307,6 +432,17 @@ class BaseTrainer(AbstractTrainer):
 
     @property
     def is_accumulating_gradients(self) -> bool:
+        """
+        Check if currently accumulating gradients.
+
+        Returns True if the current step is a gradient accumulation step
+        (i.e., gradients are being accumulated but not yet applied).
+        Returns False if this is the step where accumulated gradients
+        will be applied, or if we're on the last training batch.
+
+        Returns:
+            bool: True if accumulating gradients, False if applying them.
+        """
         return (
             (self.local_batches + 1) % self._num_gradient_accumulation_steps != 0
         ) and not self._is_last_training_batch
@@ -316,11 +452,39 @@ class BaseTrainer(AbstractTrainer):
     ######################
 
     def train_context(self):
+        """
+        Create a stacked context manager for training.
+
+        This method combines the world's training context with any additional
+        contexts provided by callbacks into a single stacked context manager.
+
+        Returns:
+            contextlib.ExitStack: A stacked context manager that applies all
+                training-related contexts.
+        """
         return stacked_context(
             [self.world.train_context()] + self.callbacks.train_context(self)
         )
 
     def perform_training_epoch(self):
+        """
+        Execute a complete training epoch.
+
+        This method:
+        1. Sets the trainer to training mode
+        2. Iterates through the training dataloader
+        3. Executes training steps with gradient accumulation
+        4. Manages callbacks before/after each step
+        5. Performs validation at specified intervals
+        6. Updates process group timeouts after the first step
+
+        The method handles gradient accumulation by only incrementing the
+        global step when gradients are applied (not during accumulation).
+
+        Raises:
+            RuntimeError: If fewer batches are received than expected, which
+                may indicate data loading issues in distributed training.
+        """
         if self._num_train_steps <= 0:
             return
 
@@ -381,6 +545,22 @@ class BaseTrainer(AbstractTrainer):
 
     @torch.no_grad()
     def perform_validation_epoch(self):
+        """
+        Execute a complete validation epoch.
+
+        This method:
+        1. Sets the trainer to evaluation mode
+        2. Disables gradient computation with @torch.no_grad()
+        3. Iterates through the validation dataloader
+        4. Executes validation steps
+        5. Manages callbacks before/after each step and epoch
+
+        All operations are performed without gradient computation for efficiency.
+
+        Raises:
+            RuntimeError: If fewer batches are received than expected, which
+                may indicate data loading issues in distributed training.
+        """
         if self._num_val_steps <= 0:
             return
 
@@ -420,6 +600,17 @@ class BaseTrainer(AbstractTrainer):
         self.callbacks.post_validation_epoch(self, result)
 
     def perform_sanity_validation_steps(self):
+        """
+        Perform sanity validation steps before training begins.
+
+        This method runs a limited number of validation steps at the start
+        of training to ensure the validation pipeline is working correctly.
+        It temporarily overrides the number of validation steps with the
+        configured number of sanity validation steps.
+
+        Sanity validation is only performed on the first epoch (epoch 0)
+        and is skipped when resuming training from a checkpoint.
+        """
         # Don't perform sanity validation on resumption
         if self.current_epoch > 0:
             return
@@ -433,6 +624,21 @@ class BaseTrainer(AbstractTrainer):
         self._num_val_steps = num_val_steps
 
     def _setup_trainer_metadata(self):
+        """
+        Initialize trainer metadata from dataloaders and configuration.
+
+        This method:
+        1. Calculates training batch size, number of steps, and gradient
+           accumulation steps from the training dataloader
+        2. Calculates validation steps and sanity validation steps
+        3. Verifies global agreement across all distributed ranks for
+           these parameters to ensure consistent training
+
+        The metadata is stored as instance variables for use throughout training.
+
+        Raises:
+            AssertionError: If any training parameters differ across distributed ranks.
+        """
         # Setup dataloader metadata
         (
             self._train_batch_size,
@@ -471,6 +677,21 @@ class BaseTrainer(AbstractTrainer):
         )
 
     def _fit(self):
+        """
+        Internal implementation of the training pipeline.
+
+        This method orchestrates the complete training lifecycle:
+        1. Pre-launch callbacks
+        2. World launch (distributed setup)
+        3. Seed initialization
+        4. Configuration and setup
+        5. Sanity validation
+        6. Main training loop for all epochs
+        7. Post-fit callbacks
+
+        Each stage is wrapped with appropriate callbacks and barriers
+        to ensure synchronization in distributed training.
+        """
         self.callbacks.pre_launch(self)
         self.world.launch()
         seed_everything(self.seed)

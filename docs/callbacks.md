@@ -3,6 +3,7 @@
 This guide explains how to use and create callbacks in Dream Trainer.
 
 ## Table of Contents
+
 - [Basic Usage](#basic-usage)
 - [Built-in Callbacks](#built-in-callbacks)
 - [Creating Callbacks](#creating-callbacks)

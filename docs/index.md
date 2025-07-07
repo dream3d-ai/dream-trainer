@@ -41,6 +41,23 @@ Dream Trainer provides simple configuration for all PyTorch parallelism schemes:
 - **Context Parallelism (CP)**: Sequence parallelism for extremely long contexts
 - **Pipeline Parallelism (PP)**: Layer pipelining across GPUs / nodes with automatic schedule search
 
+
+Unlike monolithic frameworks, Dream Trainer uses mixins to let you pick exactly what you need:
+
+```python
+# Minimal trainer for research
+class SimpleTrainer(BaseTrainer, SetupMixin):
+    def training_step(self, batch, batch_idx):
+        loss = self.model(batch)
+        self.backward(loss)
+        return {"loss": loss}
+
+# Production trainer with all the bells and whistles
+class ProductionTrainer(BaseTrainer, SetupMixin, EvalMetricMixin, 
+                       WandBLoggerMixin, QuantizeMixin):
+    # Same training_step, but now with metrics, logging, and quantization!
+```
+
 ### Other Features via Callbakcs
 
 - **Checkpointing** DCP-based checkpointing with async checkpoint support

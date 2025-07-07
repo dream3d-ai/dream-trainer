@@ -1,3 +1,15 @@
+"""Entrypoint utilities for distributed training.
+
+This module provides utilities for automatically setting up distributed training
+environments. It handles both single-process and multi-process scenarios,
+automatically detecting and configuring the necessary environment variables
+for PyTorch distributed training.
+
+The main component is the `entrypoint` decorator which can be applied to
+training functions to ensure they run in a properly configured distributed
+environment.
+"""
+
 import os
 import random
 import sys
@@ -14,8 +26,14 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 
 def has_distributed_environment() -> bool:
-    """
-    Check if the required environment variables are set.
+    """Check if the required distributed training environment variables are set.
+
+    This function verifies that all necessary environment variables for PyTorch
+    distributed training are present in the current environment.
+
+    Returns:
+        bool: True if all required environment variables (RANK, LOCAL_RANK,
+            WORLD_SIZE, MASTER_ADDR, MASTER_PORT) are set, False otherwise.
     """
     required_env_vars = [
         "RANK",
@@ -28,8 +46,55 @@ def has_distributed_environment() -> bool:
 
 
 def entrypoint(func: F) -> F:
+    """Decorator that ensures a function runs in a properly configured distributed environment.
+
+    This decorator automatically detects whether the code is running in a distributed
+    environment. If not, it sets up the necessary environment for distributed training:
+
+    - For single GPU: Sets up environment variables for single-process training
+    - For multiple GPUs: Launches multiple processes using torch.distributed.launcher
+
+    The decorator handles:
+    - Automatic detection of available CUDA devices
+    - Random port selection for distributed communication
+    - Process launching for multi-GPU scenarios
+    - Environment variable configuration
+
+    Args:
+        func: The function to be decorated. This should be your main training
+            function that expects to run in a distributed environment.
+
+    Returns:
+        The wrapped function that will automatically set up and run in a
+        distributed environment.
+
+    Example:
+        ```python
+        @entrypoint
+        def train():
+            # Your training code here
+            # Can safely use torch.distributed APIs
+            pass
+
+        if __name__ == "__main__":
+            train()  # Will automatically set up distributed environment
+        ```
+    """
+
     @wraps(func)
     def wrapper(*args, **kwargs):
+        """Wrapper function that handles distributed environment setup.
+
+        Args:
+            *args: Positional arguments to pass to the decorated function.
+            **kwargs: Keyword arguments to pass to the decorated function.
+
+        Returns:
+            The return value of the decorated function when running in an
+            existing distributed environment. For newly launched distributed
+            processes, this function doesn't return as the processes are
+            managed by the launcher.
+        """
         if has_distributed_environment():
             logger.info("Found distributed environment")
 
