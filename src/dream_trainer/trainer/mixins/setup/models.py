@@ -508,10 +508,10 @@ class ModelSetupMixin(AbstractTrainer):
 
         unwrapped = requires_grad - wrapped
 
-        # assert len(unwrapped) == 0, (
-        #     "All parameters that require gradients must be wrapped with fully_shard (or replicate if using DDP). "
-        #     f"Unwrapped parameters: {unwrapped}"
-        # )
+        assert len(unwrapped) == 0, (
+            "All parameters that require gradients must be wrapped with fully_shard (or replicate if using DDP). "
+            f"Unwrapped parameters: {unwrapped}"
+        )
 
     def _collect_parameter_fqns(self, predicate: Callable[[nn.Module], bool]) -> set[str]:
         """
