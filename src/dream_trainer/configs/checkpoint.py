@@ -1,11 +1,11 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
 
 @dataclass(kw_only=True)
 class CheckpointParameters:
-    enable: bool
+    enable: bool = True
     root_dir: str | Path
 
     resume_mode: Literal["min", "max", "last"] = "last"
@@ -17,15 +17,16 @@ class CheckpointParameters:
     keep_top_k: int = 5
     strict_load: bool = False
 
-    model_weights_only: bool
-    exclude_from_loading: list[str]
+    model_weights_only: bool = True
+    exclude_from_loading: list[str] = field(default_factory=list)
     pin_memory: bool = False
 
     def __post_init__(self):
-        if self.keep_top_k > 0 and self.keep_top_k == 1:
+        if self.enable and self.keep_top_k <= 1:
             raise ValueError(
                 "We need to maintain at least 2 checkpoint replicas, "
                 "as the last one may be in the process of being saved."
+                "Please set keep_top_k to a value greater than 1."
             )
 
         if (
