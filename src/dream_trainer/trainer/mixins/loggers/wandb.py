@@ -183,6 +183,11 @@ class WandBLoggerMixin(LoggerMixin):
 
     @override
     @background
+    def log_plot(self, plot: Any, desc: str):
+        self._wandb.log({"trainer/global_step": self.global_step, desc: plot})
+
+    @override
+    @background
     def log_code(
         self,
         directory: str = "./",
