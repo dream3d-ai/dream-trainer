@@ -1,7 +1,7 @@
 from .callback import Callback, CallbackCollection, RankZeroCallback
 from .checkpoint import AsyncCheckpointCallback, CheckpointCallback
 from .graph_breaks import FindGraphBreaksCallback
-from .loggers import LoggerCallback, MediaLoggerCallback
+from .loggers import LoggerCallback, LRLoggerCallback, MediaLoggerCallback
 from .profile import ProfileCallback
 from .progress_bar import ProgressBar
 from .weight_transfer import WeightTransferCallback
@@ -44,6 +44,7 @@ __all__ = [
     "CheckpointCallback",
     "FindGraphBreaksCallback",
     "LoggerCallback",
+    "LRLoggerCallback",
     "MediaLoggerCallback",
     "ProfileCallback",
     "TrainerSummary",

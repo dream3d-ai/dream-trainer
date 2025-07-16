@@ -492,11 +492,10 @@ class ModelSetupMixin(AbstractTrainer):
 
         # Ensure all parameters that require grad are wrapped
         wrapped = {
-            f"{name}.{module_name}.{param_name}"
+            f"{name}.{param_name}"
             for name, model in self.named_models().items()
-            for module_name, module in model.named_modules()
-            for param_name, _ in module.named_parameters()
-            if isinstance(module, (FSDPModule, DDPModule))
+            for param_name, _ in model.named_parameters()
+            if isinstance(model, (FSDPModule, DDPModule))
         }
 
         requires_grad = {

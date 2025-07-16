@@ -38,6 +38,9 @@ class AsyncCheckpointCallback(CheckpointCallback):
         self._load_future = None
 
         self.purge_queue = queue.Queue()
+        self.purge_thread = threading.Thread(
+            target=_purge_thread, args=(self.purge_queue,), daemon=True
+        )
 
     @override
     def _save(self, checkpoint: Checkpoint):
@@ -94,9 +97,6 @@ class AsyncCheckpointCallback(CheckpointCallback):
 
         # async purging
         if self.config.keep_top_k > 0:
-            self.purge_thread = threading.Thread(
-                target=_purge_thread, args=(self.purge_queue,), daemon=True
-            )
             self.purge_thread.start()
 
     def pre_validation_step(self, batch: dict[str, Any], batch_idx: int):
@@ -129,7 +129,7 @@ class AsyncCheckpointCallback(CheckpointCallback):
         self._wait_save()
         self._wait_load()
 
-        if self.config.keep_top_k > 0:
+        if self.config.keep_top_k > 0 and self.purge_thread.is_alive():
             self.purge_queue.put(Terminate())
             self.purge_thread.join()
 
