@@ -1,421 +1,822 @@
 # Parallelism Guide
 
-This guide explains the different types of parallelism supported by Dream Trainer and how to use them effectively.
-
-For a complete example see `dream-trainer/examples/llama3/setup.py`
+Dream Trainer provides first-class support for all modern parallelism strategies in PyTorch. This guide covers everything from basic data parallelism to advanced self-parallelizing models using `fsdp2_utils`.
 
 ## Table of Contents
 
 - [Overview](#overview)
-- [Data Parallelism](#data-parallelism)
-- [FSDP](#fsdp)
-- [Tensor Parallelism](#tensor-parallelism)
-- [Context Parallelism](#context-parallelism)
-- [Pipeline Parallelism](#pipeline-parallelism)
-- [Combining Parallelism](#combining-parallelism)
+- [Understanding Memory and Batch Size Constraints](#understanding-memory-and-batch-size-constraints)
+- [Parallelism Strategies](#parallelism-strategies)
+- [Network Topology Considerations](#network-topology-considerations)
+- [Basic Configuration](#basic-configuration)
+- [Self-Parallelizing Models with fsdp2_utils](#self-parallelizing-models-with-fsdp2_utils)
+- [Manual Parallelism Implementation](#manual-parallelism-implementation)
+- [Combining Parallelism Strategies](#combining-parallelism-strategies)
+- [Performance Optimization](#performance-optimization)
+- [Debugging Tips](#debugging-tips)
 
 ## Overview
 
-Dream Trainer is built around PyTorch's DTensor abstractions, providing a unified interface for all parallelism schemes. Each type of parallelism serves a specific purpose:
+Dream Trainer supports five types of parallelism, all built on PyTorch's DTensor infrastructure:
 
-- **Data Parallelism**: Scale training across multiple GPUs by replicating the model
-- **FSDP2**: Second-generation Fully-Sharded Data Parallel built on DTensor
-- **Tensor Parallelism**: Split model parameters across GPUs for larger models
-- **Context Parallelism**: Handle long sequences by splitting across GPUs
-- **Pipeline Parallelism**: Split model layers across GPUs for efficient memory usage
+1. **Data Parallelism (DP)**: Split batches across devices
+   - `dp_replicate`: Traditional DDP replication
+   - `dp_shard`: FSDP2 sharding
 
-## Data Parallelism
+2. **Tensor Parallelism (TP)**: Split model layers across devices
 
-Data Parallelism is the simplest form of parallelism, where the model is replicated across GPUs and each GPU processes a different batch of data.
+3. **Pipeline Parallelism (PP)**: Split model stages across devices
 
-### Using PyTorch's Replicate API
+4. **Context Parallelism (CP)**: Split sequence dimension for long contexts
+
+5. **Hybrid Strategies**: Combine multiple types (e.g., HSDP = DDP + FSDP)
+
+## Understanding Memory and Batch Size Constraints
+
+Before diving into parallelism strategies, it's crucial to understand what consumes memory during training and how batch size affects training dynamics.
+
+### Memory Breakdown During Training
+
+According to [Jeremy Jordan's analysis](https://www.jeremyjordan.me/distributed-training/), training a model requires keeping several components in memory:
+
+1. **Model Parameters**: The learnable weights (e.g., 405B parameters = ~810GB in FP16)
+2. **Optimizer States**: 
+   - SGD: Just parameters (1x memory)
+   - Adam/AdamW: Parameters + first moment + second moment (3x memory)
+3. **Model Activations**: Intermediate values needed for backpropagation
+   - Scales with batch size and model architecture
+   - Can be the dominant memory consumer for large batches
+4. **Gradients**: Same size as model parameters
+5. **Input Data**: The actual batch being processed
 
 ```python
-from dream_trainer.trainer.mixins import ModelSetupMixin
-from dream_trainer.configs import DeviceParameters
-from torch.distributed.device_mesh import DeviceMesh
-
-config = DreamTrainerConfig(
-    device_parameters=DeviceParameters.DDP(
-        compile_model=True,
-        checkpoint_activations=False,
-    )
-)
-
-class MyTrainer(ModelSetupMixin):
-    def apply_replicate(self, dp_replicate_mesh: DeviceMesh):
-        # Wraps the model in place with Distributed Data Parallel
-        replicate(self.model, device_mesh=dp_replicate_mesh, bucket_cap_mb=100)
+# Example memory calculation for a 7B parameter model
+model_params = 7e9 * 2  # 14GB in FP16
+optimizer_states = model_params * 3  # 42GB for AdamW
+gradients = model_params  # 14GB
+# Total: 70GB + activations + data
 ```
 
-### Key Features
+### The Science of Batch Size Scaling
 
-- **Simple Setup**: Just specify the number of GPUs
-- **Linear Scaling**: Training speed scales linearly with GPU count
-- **Memory Efficient**: Each GPU holds a complete model copy
-- **Gradient Synchronization**: Automatic gradient averaging across GPUs
+Not all batch sizes are created equal. As explained in ["An Empirical Model of Large-Batch Training"](https://www.jeremyjordan.me/distributed-training/), there are two distinct regimes:
 
-### Best Practices
+1. **Perfect Scaling Regime**: When batch size is small, you can double the batch size and double the learning rate to train in half the steps
+2. **Ineffective Scaling Regime**: Beyond a critical batch size, increasing batch size provides diminishing returns
 
-1. Use when:
-
-   - Model fits in GPU memory
-   - Batch size can be increased
-   - Training speed is the priority
-
-2. Avoid when:
-   - Model is too large for single GPU
-   - Memory efficiency is critical
-   - Need more advanced parallelism
-
-## FSDP
-
-Fully Sharded Data Parallel (FSDP) reduces memory usage by sharding model parameters across GPUs.
-
-### Using FSDP2 API
+The transition point (called the **gradient noise scale**) depends on your data and model. Importantly, this transition point *increases* during training, which is why models like Llama 3.1 progressively increase batch size:
 
 ```python
-from dream_trainer import DreamTrainerConfig
-from dream_trainer.configs import DeviceParameters
-
-config = DreamTrainerConfig(
-    device_parameters=DeviceParameters.FSDP(
-        tensor_parallel=1,
-        dp_shard="auto",
-        compile_model=True,
-        cpu_offload=False,
-        checkpoint_activations=False,
-    )
-)
-
-class MyTrainer(ModelSetupMixin):
-    def apply_fully_shard(self, config: dict[str, Any]) -> None:
-        # NOTE: if using Pipeline Parallelism, make sure to set reshard_after_forward=False on all layers for optimal performance.
-        for layer in self.model.layers:
-            fully_shard(layer, **config)
-        fully_shard(self.model, **config, reshard_after_forward=False)
+# Llama 3.1 training schedule
+initial_batch = 4M tokens
+after 252M tokens: batch_size = 8M
+after 2.87T tokens: batch_size = 16M
 ```
 
-Alternatively, we can define our sharding strategy directly on the model with `fsdp2-utils` for simpler usage. `apply_fully_shard` will recurisvely call `Model.fully_shard` on all of the model's submodules that conform to the `FullyShard` protocol.
+### Memory Reduction Techniques
 
-> **Note:**  
-> All of the model's layers need to be wrapped with `fully_shard` to ensure inputs & layers are properly casted to the correct dtype/device specified by the `MixedPrecisionPolicy`. This casting & device movement is handled internally by FSDP.
-
-```python
-import torch.nn as nn
-from typing import Any
-from fsdp2_utils import apply_fully_shard, FullyShard
-
-class TransformerBlock(nn.Module, FullyShard):
-    attention: Attention
-    feed_forward: FeedForward
-    attention_norm: nn.RMSNorm
-    ffn_norm: nn.RMSNorm
-
-    def fully_shard(self, config: dict[str, Any]):
-        fully_shard(self.attention, **config)
-        fully_shard(self.feed_forward, **config)
-        fully_shard(self.attention_norm, **config)
-        fully_shard(self.ffn_norm, **config)
-
-class Transformer(nn.Module, FullyShard):
-    input: nn.Linear
-    layers: nn.ModuleList
-    output: nn.Linear
-
-    def fully_shard(self, config: dict[str, Any]):
-        fully_shard(self.input, **config)
-        fully_shard(self.layers, **config)
-        fully_shard(self.output, **config, reshard_after_forward=False)
-
-class MyTrainer(ModelSetupMixin):
-    def apply_fully_shard(self, config: dict[str, Any]) -> None:
-        # apply_fully_shard will override reshard_after_forward to `False` for all blocks when Pipeline Parallelism is enabled.
-        apply_fully_shard(self.model, config, pp_enabled=self.world.pp_enabled)
-
-```
-
-### Key Features
-
-- **Memory Efficiency**: Parameters are sharded across GPUs
-- **Mixed Precision**: Native support for FP16/BF16 mixed precision training
-- **Gradient Sharding**: Reduces memory during backward pass
-
-### Best Practices
-
-1. Use when:
-
-   - Model is too large for single GPU
-   - Memory efficiency is important
-   - Training speed can be sacrificed for memory
-
-2. Configuration Tips:
-   - Choose sharding strategy based on memory constraints
-   - Enable mixed precision for better performance
-   - Use activation checkpointing for very large models
-
-[Read more about Fully Sharded Data Parallel (FSDP) in the PyTorch documentation.](https://docs.pytorch.org/docs/stable/distributed.fsdp.fully_shard.html)
-
-## Tensor Parallelism
-
-Tensor Parallelism splits model parameters across GPUs, allowing for even larger models. Again, we'll use `fsdp2-utils` to simplify how we apply tensor parallelism.
-
-### Configuration
+When you hit memory limits on a single GPU, you have several options before resorting to parallelism:
 
 ```python
-import torch.nn as nn
-from typing import Any
-from fsdp2_utils import apply_tensor_parallel, ParallelPlan
-
-from dream_trainer import DreamTrainerConfig
-from dream_trainer.configs import DeviceParameters
-
-config = DreamTrainerConfig(
-    device_parameters=DeviceParameters.FSDP(
-        tensor_parallel="auto",
-        dp_shard=1,    # no FSDP
-        compile_model=True,
-        cpu_offload=False,
-        checkpoint_activations=False,
-    )
+# 1. Gradient Accumulation (trade compute for memory)
+config = TrainingParameters(
+    train_batch_size=8,
+    gradient_accumulation_steps=4,  # Effective batch = 32
 )
 
-class TransformerBlockParallel(ParallelPlan):
-    attention_norm: nn.RMSNorm
-    attention: "Attention"
-    feed_forward: "FeedForward"
-    ffn_norm: nn.RMSNorm
+# 2. Activation Checkpointing (recompute vs store)
+config = DeviceParameters(
+    checkpoint_activations=True,  # ~30% memory savings
+)
 
-    def parallelize_plan(self, _):
+# 3. Mixed Precision (reduce precision)
+config = DeviceParameters(
+    param_dtype=torch.bfloat16,  # 2x memory savings vs FP32
+)
+```
+
+## Parallelism Strategies
+
+### Understanding the Trade-offs
+
+Each parallelism strategy makes different trade-offs between memory savings, communication overhead, and implementation complexity:
+
+| Strategy | Memory Savings | Communication | Best For |
+|----------|---------------|---------------|----------|
+| DDP | None | All-reduce gradients (once per step) | Small models, high bandwidth |
+| FSDP2 | High | All-gather params + reduce-scatter grads | Large models |
+| TP | Medium | All-reduce activations (multiple per layer) | Wide models (large hidden dims) |
+| PP | High | Point-to-point activations | Deep models (many layers) |
+| CP | Medium | All-to-all for attention | Long sequences |
+
+### Data Parallelism: The Foundation
+
+Data parallelism is the simplest and most common form of distributed training. Each GPU maintains a complete copy of the model and processes different batches:
+
+```python
+# Traditional DDP - each GPU has full model
+config = DeviceParameters(dp_replicate=8)  # 8 GPUs
+
+# FSDP2 - shards model across GPUs
+config = DeviceParameters(dp_shard=8)  # 8 GPUs, ~8x memory reduction
+```
+
+**When to use DDP:**
+- Model fits on single GPU
+- High-bandwidth interconnect available
+- Want simplest implementation
+
+**When to use FSDP2:**
+- Model too large for single GPU
+- Need to train larger models with same hardware
+- Can tolerate some communication overhead
+
+### Tensor Parallelism: Splitting Layers
+
+Tensor parallelism splits individual layers across GPUs. As [explained by Jeremy Jordan](https://www.jeremyjordan.me/distributed-training/), there are two main approaches:
+
+#### Column Partitioning
+Splits weight matrix along output dimension:
+
+```python
+# Weight W: [input_dim, output_dim]
+# Each GPU gets W_i: [input_dim, output_dim/n_gpus]
+
+# Forward: X @ W_i → Y_i (then all-gather)
+# Backward: Gradient flows naturally
+```
+
+#### Row Partitioning  
+Splits weight matrix along input dimension:
+
+```python
+# Weight W: [input_dim, output_dim]
+# Each GPU gets W_i: [input_dim/n_gpus, output_dim]
+
+# Forward: X_i @ W_i → partial Y (then all-reduce)
+# Backward: Need all-gather for input gradients
+```
+
+#### Optimizing Communication
+
+The Megatron-LM paper showed how clever partitioning reduces communication:
+
+```python
+class OptimizedMLP(nn.Module, ParallelPlan):
+    def parallelize_plan(self):
         return {
-            "attention_norm": sequence_parallel(self.attention_norm),
-            "attention": prepare_module_input(
-                self.attention,
-                input_layouts=(Shard(1), None),
-                desired_input_layouts=(Replicate(), None),
-            ),
-            "attention.wq": colwise_parallel(self.attention.wq),
-            "attention.wk": colwise_parallel(self.attention.wk),
-            "attention.wv": colwise_parallel(self.attention.wv),
-            "attention.wo": rowwise_parallel(self.attention.wo, output_layouts=Shard(1)),
-            "ffn_norm": sequence_parallel(self.ffn_norm),
-            "feed_forward": prepare_module_input(
-                self.feed_forward,
-                input_layouts=(Shard(1),),
-                desired_input_layouts=(Replicate(),),
-            ),
-            "feed_forward.w1": colwise_parallel(self.feed_forward.w1),
-            "feed_forward.w2": rowwise_parallel(self.feed_forward.w2, output_layouts=Shard(1)),
-            "feed_forward.w3": colwise_parallel(self.feed_forward.w3),
+            # First layer: column partition (output split)
+            "fc1": colwise_parallel(self.fc1),
+            
+            # Activation: computed locally on each GPU
+            
+            # Second layer: row partition (input split)
+            # Takes split input directly - no communication!
+            "fc2": rowwise_parallel(self.fc2),
+            
+            # Only one all-reduce at the end
         }
-
-
-class TransformerParallel(FullyShard, ParallelPlan):
-    tok_embeddings: nn.Embedding
-    norm: nn.RMSNorm
-    output: nn.Linear
-    layers: nn.ModuleDict
-
-    def parallelize_plan(self, loss_parallel: bool):
-        return (
-            {
-                "tok_embeddings": rowwise_parallel(
-                    self.tok_embeddings,
-                    input_layouts=Replicate(),
-                    output_layouts=Shard(1),
-                ),
-                "norm": sequence_parallel(self.norm),
-                "output": colwise_parallel(
-                    self.output,
-                    input_layouts=Shard(1),
-                    output_layouts=Shard(-1) if loss_parallel else Replicate(),
-                    use_local_output=not loss_parallel,
-                ),
-            },
-        )
-
-class MyTrainer(ModelSetupMixin):
-    def apply_fully_shard(self, tp_mesh: DeviceMesh) -> None:
-        apply_tensor_parallel(self.model, tp_mesh=tp_mesh, loss_parallel=self.world.loss_parallel_enabled)
-
 ```
 
-> **Note:**  
-> Using `fsdp2-utils` greatly simplifies the construction of a parallel plan.
->
-> Without `fsdp2-utils`, you would need to manually build a parallel plan using PyTorch's classes like `ColwiseParallel` or `RowwiseParallel` for each layer. This process can become complex, especially if you want to use features like fp8 quantization, which would require using `Fp8ColwiseParallel` or similar classes for the affected layers.
->
-> With `fsdp2-utils`, you only need to define a `parallel_plan` function for your model or block. The utility will automatically generate the correct plan at runtime, choosing the appropriate parallelization strategy (including fp8 support) for each layer.
+This pattern reduces communication by 50% compared to naive partitioning!
 
-### Key Features
+### Pipeline Parallelism: Splitting Stages
 
-- **Parameter Sharding**: Split large tensors across GPUs
-- **Communication Efficiency**: Minimizes cross-GPU communication
-- **Flexible Sharding**: Choose which dimensions to split
-
-### Best Practices
-
-1. Use when:
-
-   - Model has large parameter tensors
-   - Need more memory efficiency than FSDP
-   - Want to combine with other parallelism
-
-2. Configuration Tips:
-   - Choose parallel dimension carefully
-   - Consider communication overhead
-   - Use with FSDP for maximum memory efficiency
-
-## Context Parallelism
-
-Context Parallelism splits sequences across GPUs, useful for long-context models.
-
-### Configuration
+Pipeline parallelism splits the model into sequential stages, with each GPU responsible for a subset of layers:
 
 ```python
-from dream_trainer import DreamTrainerConfig
+# Model split across 4 GPUs
+GPU 0: Embedding + Layers[0:8]
+GPU 1: Layers[8:16]  
+GPU 2: Layers[16:24]
+GPU 3: Layers[24:32] + Output
+
+# Microbatching keeps GPUs busy
+microbatch_size = batch_size // num_microbatches
+```
+
+**Advantages:**
+- Each GPU only stores its layers (high memory savings)
+- Only forward/backward activations communicated
+- Works well across nodes with slower interconnect
+
+**Disadvantages:**
+- Pipeline bubbles reduce efficiency
+- Requires careful load balancing
+- More complex implementation
+
+### Context Parallelism: Splitting Sequences
+
+For extremely long sequences, context parallelism splits the sequence dimension:
+
+```python
+# Sequence length 128K split across 4 GPUs
+GPU 0: tokens[0:32K]
+GPU 1: tokens[32K:64K]
+GPU 2: tokens[64K:96K]  
+GPU 3: tokens[96K:128K]
+
+# Attention requires all-to-all communication
+```
+
+## Network Topology Considerations
+
+Modern GPU clusters have hierarchical network structures that significantly impact parallelism choices. As noted in the [Llama 3.1 training details](https://www.jeremyjordan.me/distributed-training/):
+
+```
+Within node: 8 GPUs connected via NVLink (900 GB/s)
+Within rack: 2 nodes connected via network switch
+Within pod: 192 racks (3,072 GPUs)
+Full cluster: 8 pods (24,576 GPUs)
+```
+
+### Optimal Parallelism Placement
+
+Based on network topology, place parallelism strategies hierarchically:
+
+```python
+# Optimal configuration for hierarchical networks
+config = DeviceParameters(
+    # Within node (NVLink - highest bandwidth)
+    tensor_parallel=8,  # Requires frequent communication
+    
+    # Across nodes within rack (InfiniBand - medium bandwidth)  
+    pipeline_parallel=2,  # Only activations communicated
+    
+    # Across racks (Ethernet - lowest bandwidth)
+    dp_shard=16,  # Only gradient sync required
+)
+
+# Total: 8 * 2 * 16 = 256 GPUs
+```
+
+### Example: Llama 3.1 405B Configuration
+
+The Llama 3.1 training used a carefully optimized setup:
+
+```python
+# Llama 3.1 405B parallelism
+tensor_parallel = 8      # Within node (NVLink)
+pipeline_parallel = 16   # Across nodes
+data_parallel = 128      # Across everything
+
+# Total: 16,384 GPUs
+# Memory per GPU: ~50GB (405B params / 8 TP / 16 PP)
+```
+
+## Basic Configuration
+
+Configure parallelism through `DeviceParameters`:
+
+```python
 from dream_trainer.configs import DeviceParameters
 
-config = DreamTrainerConfig(
-    device_parameters=DeviceParameters.FSDP(
-        tensor_parallel=2,    # Split across 2 GPUs
-        dp_shard="auto",
-    )
+config = DeviceParameters(
+    # Data parallelism
+    dp_replicate=2,      # 2-way DDP
+    dp_shard=4,          # 4-way FSDP within each DDP group
+    
+    # Model parallelism
+    tensor_parallel=2,   # 2-way TP
+    pipeline_parallel=4, # 4 pipeline stages
+    context_parallel=2,  # 2-way sequence splitting
+    
+    # Optimizations
+    compile_model=True,
+    loss_parallel=True,  # Parallel loss with TP
+    async_tensor_parallel=True,  # Overlap TP communication
 )
 ```
 
-### Key Features
+## Self-Parallelizing Models with fsdp2_utils
 
-- **Sequence Splitting**: Distribute long sequences across GPUs
-- **Efficient Attention**: Optimized attention computation
-- **Overlap Support**: Optional computation overlap
-- **Memory Efficiency**: Reduces memory per GPU
+The most elegant approach to parallelism in Dream Trainer is using `fsdp2_utils` to create models that know how to parallelize themselves. This encapsulates complex sharding logic within the model definition.
 
-### Best Practices
+### The Pattern: Models That Parallelize Themselves
 
-1. Use when:
-
-   - Working with long sequences
-   - Attention computation is memory-intensive
-   - Need to process longer contexts
-
-2. Configuration Tips:
-   - Choose appropriate split dimension
-   - Enable overlap for better performance
-   - Consider communication overhead
-
-## Pipeline Parallelism
-
-Pipeline Parallelism splits model layers across GPUs, enabling efficient memory usage.
-
-### Configuration
+Instead of implementing parallelism in the trainer, models inherit from `FullyShard` and `ParallelPlan`:
 
 ```python
-from dream_trainer import DreamTrainerConfig
-from dream_trainer.configs import DeviceParameters
-
-config = DreamTrainerConfig(
-    device_parameters=DeviceParameters(
-        pipeline_parallel_size=2,  # Split across 2 GPUs
-        pipeline_parallel_config={
-            "num_microbatches": 4,  # Number of microbatches
-            "schedule": "1F1B"  # Pipeline schedule
-        }
-    )
+from typing import Any
+import torch.nn as nn
+from fsdp2_utils import FullyShard, ParallelPlan, apply_tensor_parallel, apply_fully_shard
+from fsdp2_utils.tensor_parallel.plan import (
+    colwise_parallel, 
+    rowwise_parallel,
+    sequence_parallel,
+    prepare_module_input
 )
+from torch.distributed.fsdp import fully_shard
+from torch.distributed.tensor.placement_types import Replicate, Shard
+
+class TransformerModel(nn.Module, FullyShard, ParallelPlan):
+    """A transformer that knows how to parallelize itself"""
+    
+    def __init__(self, config):
+        super().__init__()
+        self.embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.layers = nn.ModuleList([
+            TransformerLayer(config) for _ in range(config.num_layers)
+        ])
+        self.norm = RMSNorm(config.hidden_size)
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+    
+    def fully_shard(self, config: dict[str, Any]):
+        """Define FSDP sharding strategy"""
+        # Shard each transformer layer independently
+        for layer in self.layers:
+            fully_shard(layer, **config)
+        
+        # Shard embeddings and output separately
+        fully_shard(self.embeddings, **config)
+        fully_shard(self.lm_head, **config)
+    
+    def parallelize_plan(self):
+        """Define tensor parallel strategy"""
+        plan = {
+            # Embeddings: row-wise parallel (vocab dimension)
+            "embeddings": rowwise_parallel(
+                self.embeddings,
+                input_layouts=Replicate(),  # Input tokens are replicated
+                output_layouts=Shard(1),    # Output is sharded on sequence dim
+            ),
+            
+            # Final layer norm: sequence parallel
+            "norm": sequence_parallel(self.norm),
+            
+            # LM head: column-wise parallel (vocab dimension)
+            "lm_head": colwise_parallel(
+                self.lm_head,
+                input_layouts=Shard(1),     # Input is sharded
+                output_layouts=Replicate(), # Output is replicated
+                use_local_output=True,
+            ),
+        }
+        
+        # Add plans for each transformer layer
+        for i, layer in enumerate(self.layers):
+            plan.update(layer.parallelize_plan(prefix=f"layers.{i}"))
+        
+        return plan
+```
+
+### Implementing Parallelism in Submodules
+
+Each component defines its own parallelism strategy:
+
+```python
+class TransformerLayer(nn.Module, ParallelPlan):
+    def __init__(self, config):
+        super().__init__()
+        self.attention = MultiHeadAttention(config)
+        self.mlp = MLP(config)
+        self.norm1 = RMSNorm(config.hidden_size)
+        self.norm2 = RMSNorm(config.hidden_size)
+    
+    def parallelize_plan(self, prefix=""):
+        """Define TP plan for this layer"""
+        def add_prefix(name):
+            return f"{prefix}.{name}" if prefix else name
+        
+        return {
+            # Attention: QKV column-wise, O row-wise
+            add_prefix("attention.q_proj"): colwise_parallel(self.attention.q_proj),
+            add_prefix("attention.k_proj"): colwise_parallel(self.attention.k_proj),
+            add_prefix("attention.v_proj"): colwise_parallel(self.attention.v_proj),
+            add_prefix("attention.o_proj"): rowwise_parallel(
+                self.attention.o_proj,
+                input_layouts=Shard(-1),  # Sharded on head dimension
+            ),
+            
+            # MLP: standard Megatron-style parallelism
+            add_prefix("mlp.gate_proj"): colwise_parallel(self.mlp.gate_proj),
+            add_prefix("mlp.up_proj"): colwise_parallel(self.mlp.up_proj),
+            add_prefix("mlp.down_proj"): rowwise_parallel(
+                self.mlp.down_proj,
+                input_layouts=Shard(-1),  # Sharded on hidden dimension
+            ),
+            
+            # Layer norms use sequence parallelism
+            add_prefix("norm1"): sequence_parallel(self.norm1),
+            add_prefix("norm2"): sequence_parallel(self.norm2),
+        }
+```
+
+### Simplified Trainer Implementation
+
+With self-parallelizing models, trainers become remarkably simple:
+
+```python
+from fsdp2_utils import apply_tensor_parallel, apply_fully_shard
 
 class MyTrainer(DreamTrainer):
     def configure_models(self):
-        # Model is automatically split into pipeline stages
-        self.model = self.model.to(self.device)
+        # Model knows how to parallelize itself!
+        self.model = TransformerModel(self.config)
+    
+    def apply_tensor_parallel(self, tp_mesh: DeviceMesh):
+        """Just delegate to the model's built-in TP strategy"""
+        apply_tensor_parallel(self.model, tp_mesh)
+    
+    def apply_fully_shard(self, config: dict[str, Any]):
+        """Just delegate to the model's built-in FSDP strategy"""
+        apply_fully_shard(self.model, config)
 ```
 
-### Key Features
+### Advanced: Heterogeneous Parallelism for Multi-Modal Models
 
-- **Layer Splitting**: Distribute model layers across GPUs
-- **Microbatch Support**: Process multiple batches in pipeline
-- **Efficient Scheduling**: Various pipeline schedules available
-- **Memory Efficiency**: Each GPU holds only its layers
-
-### Best Practices
-
-1. Use when:
-
-   - Model has many layers
-   - Need to maximize GPU utilization
-   - Memory efficiency is critical
-
-2. Configuration Tips:
-   - Choose appropriate number of microbatches
-   - Select pipeline schedule based on model
-   - Balance pipeline stages
-
-## Combining Parallelism
-
-Dream Trainer makes it easy to combine different types of parallelism.
-
-### Example: FSDP + Tensor Parallel
+Different model components can use different strategies:
 
 ```python
-config = DreamTrainerConfig(
-    device_parameters=DeviceParameters(
-        data_parallel_size=2,  # 2-way data parallel
-        tensor_parallel_size=2,  # 2-way tensor parallel
-        fsdp_config={
-            "sharding_strategy": "FULL_SHARD",
-            "mixed_precision": True
+class VisionLanguageModel(nn.Module, FullyShard, ParallelPlan):
+    """Multi-modal model with component-specific parallelism"""
+    
+    def __init__(self, config):
+        super().__init__()
+        self.vision_encoder = VisionTransformer(config.vision)
+        self.text_encoder = TextTransformer(config.text)
+        self.cross_attention = CrossModalAttention(config)
+        self.projection = nn.Linear(config.hidden_size, config.output_size)
+    
+    def fully_shard(self, config: dict[str, Any]):
+        """Different sharding for different components"""
+        # Vision: larger sharding units (less communication)
+        vision_config = {**config, "min_num_params_per_shard": 50_000_000}
+        self.vision_encoder.fully_shard(vision_config)
+        
+        # Text: standard sharding
+        self.text_encoder.fully_shard(config)
+        
+        # Cross-attention: aggressive sharding (memory intensive)
+        cross_config = {**config, "min_num_params_per_shard": 10_000_000}
+        fully_shard(self.cross_attention, **cross_config)
+    
+    def parallelize_plan(self):
+        """Different TP strategies for different modalities"""
+        return {
+            # Vision doesn't use TP (compute bound, not memory bound)
+            "vision_encoder": prepare_module_input(
+                self.vision_encoder,
+                input_layouts=Replicate(),
+            ),
+            
+            # Text uses full TP
+            **{f"text_encoder.{k}": v 
+               for k, v in self.text_encoder.parallelize_plan().items()},
+            
+            # Cross-attention uses custom strategy
+            "cross_attention.q_proj": colwise_parallel(
+                self.cross_attention.q_proj,
+                input_layouts=Replicate(),  # From vision
+            ),
+            "cross_attention.kv_proj": colwise_parallel(
+                self.cross_attention.kv_proj,
+                input_layouts=Shard(1),     # From text
+            ),
         }
-    )
+```
+
+### Benefits of Self-Parallelizing Models
+
+1. **Encapsulation**: Parallelism logic lives with model definition
+2. **Reusability**: Same model works in any trainer
+3. **Clarity**: Structure and strategy are co-located
+4. **Composability**: Complex models built from simple parallel components
+5. **Type Safety**: IDE understands the parallelism interface
+
+## Manual Parallelism Implementation
+
+For cases where you need fine-grained control:
+
+### Manual Tensor Parallelism
+
+```python
+from torch.distributed.tensor.parallel import parallelize_module, ColwiseParallel, RowwiseParallel
+
+class MyTrainer(DreamTrainer):
+    def apply_tensor_parallel(self, tp_mesh: DeviceMesh):
+        # Manual TP for specific layers
+        for layer in self.model.layers:
+            plan = {
+                "attention.wq": ColwiseParallel(),
+                "attention.wk": ColwiseParallel(),
+                "attention.wv": ColwiseParallel(),
+                "attention.wo": RowwiseParallel(),
+                "mlp.w1": ColwiseParallel(),
+                "mlp.w2": RowwiseParallel(),
+            }
+            parallelize_module(layer, tp_mesh, plan)
+```
+
+### Manual FSDP2
+
+```python
+from torch.distributed._composable.fsdp import fully_shard
+
+class MyTrainer(DreamTrainer):
+    def apply_fully_shard(self, config: dict[str, Any]):
+        # Custom sharding per layer
+        for i, layer in enumerate(self.model.layers):
+            if i < 10:  # First 10 layers
+                fully_shard(layer, **config)
+            else:  # Later layers use different config
+                custom_config = {**config, "reshard_after_forward": False}
+                fully_shard(layer, **custom_config)
+```
+
+### Manual Pipeline Parallelism
+
+```python
+from torch.distributed.pipelining import pipeline, SplitPoint, PipelineStage
+
+class MyTrainer(DreamTrainer):
+    def apply_pipeline_parallel(self, pp_mesh: DeviceMesh):
+        # Define split points
+        mb = [self.model.embeddings, *self.model.layers, self.model.output]
+        
+        # Create pipeline stages
+        stages = [
+            PipelineStage(mb[:8], 0),   # First 8 layers
+            PipelineStage(mb[8:16], 1),  # Next 8 layers
+            PipelineStage(mb[16:24], 2), # Next 8 layers  
+            PipelineStage(mb[24:], 3),   # Rest
+        ]
+        
+        # Create schedule
+        schedule = pipeline(
+            stages,
+            pp_mesh,
+            mb_size=self.config.pipeline_parallel_microbatch_size,
+        )
+        
+        return {"model": (schedule, stages, True, True)}
+```
+
+## Combining Parallelism Strategies
+
+### Real-World Examples
+
+Based on model size and available hardware, here are recommended configurations:
+
+#### Small Model (< 1B parameters)
+```python
+# Fits on single GPU - use pure data parallelism
+config = DeviceParameters(
+    dp_replicate=num_gpus,  # Simple DDP
+    compile_model=True,     # Optimize single GPU perf
 )
 ```
 
-### Example: Pipeline + Context Parallel
-
+#### Medium Model (1B - 70B parameters)
 ```python
-config = DreamTrainerConfig(
-    device_parameters=DeviceParameters(
-        pipeline_parallel_size=2,  # 2-way pipeline parallel
-        context_parallel_size=2,  # 2-way context parallel
-        pipeline_parallel_config={
-            "num_microbatches": 4,
-            "schedule": "1F1B"
-        }
-    )
+# Needs FSDP for memory, optional TP for speed
+config = DeviceParameters(
+    dp_shard=8,          # FSDP for memory efficiency
+    tensor_parallel=2,   # Optional: faster but more GPUs
 )
 ```
 
-### Best Practices for Combining
+#### Large Model (70B - 500B parameters)
+```python
+# Requires both memory and compute parallelism
+config = DeviceParameters(
+    tensor_parallel=8,    # Split within nodes
+    pipeline_parallel=4,  # Split across nodes
+    dp_shard=16,         # FSDP across everything
+)
+```
 
-1. **Start Simple**: Begin with one type of parallelism
-2. **Add Gradually**: Add more parallelism as needed
-3. **Monitor Performance**: Watch for communication overhead
-4. **Balance Resources**: Ensure even distribution of work
-5. **Consider Memory**: Account for memory requirements
+#### Extreme Scale (500B+ parameters)
+```python
+# Everything at maximum scale
+config = DeviceParameters(
+    tensor_parallel=8,     # Max TP within node
+    pipeline_parallel=16,  # Many pipeline stages
+    dp_replicate=2,       # HSDP: DDP across pods
+    dp_shard=64,          # FSDP within pods
+    context_parallel=4,    # For long sequences
+)
+```
 
-## Common Issues
+### 3D Parallelism (DP + TP + PP)
 
-### Memory Issues
+```python
+config = DeviceParameters(
+    dp_shard=4,          # 4-way FSDP
+    tensor_parallel=2,   # 2-way TP  
+    pipeline_parallel=2, # 2 pipeline stages
+    # Total: 4 * 2 * 2 = 16 GPUs
+)
+```
 
-- **Out of Memory**: Reduce parallelism degree or enable mixed precision
-- **Uneven Memory**: Balance pipeline stages or tensor sharding
-- **Gradient Memory**: Use gradient checkpointing or FSDP
+### HSDP (Hybrid Sharded Data Parallel)
 
-### Performance Issues
+HSDP combines the benefits of DDP and FSDP by creating a hierarchy:
 
-- **Slow Training**: Check communication overhead
-- **Poor Scaling**: Verify batch size and parallelism configuration
-- **Bottlenecks**: Profile to identify communication bottlenecks
+```python
+config = DeviceParameters(
+    dp_replicate=2,  # 2 DDP groups (across pods)
+    dp_shard=4,      # 4-way FSDP within each group
+)
 
-### Debugging Tips
+# Communication pattern:
+# - Gradient reduce-scatter within FSDP groups (high bandwidth)
+# - Gradient all-reduce across DDP groups (low bandwidth)
+# Result: Less cross-pod communication
+```
 
-1. Start with small models and data
-2. Enable detailed logging
-3. Use PyTorch profiler
-4. Monitor GPU utilization
-5. Check communication patterns
+### Context Parallel + Tensor Parallel
+
+```python
+config = DeviceParameters(
+    context_parallel=4,  # 4-way sequence splitting
+    tensor_parallel=2,   # 2-way tensor parallel
+    # Enables 4x longer sequences with 2x model parallel
+)
+```
+
+## Performance Optimization
+
+### Optimizing for Your Hardware
+
+1. **Measure Your Baseline**
+```python
+# Profile single GPU performance first
+with torch.profiler.profile() as prof:
+    trainer.fit()
+    
+# Key metrics:
+# - GPU utilization (target: >90%)
+# - Memory bandwidth utilization
+# - Time spent in communication vs compute
+```
+
+2. **Scale Gradually**
+```python
+# Start simple, add parallelism incrementally
+configs = [
+    DeviceParameters(dp_replicate=8),  # Pure DDP
+    DeviceParameters(dp_shard=8),      # Pure FSDP
+    DeviceParameters(dp_shard=4, tensor_parallel=2),  # FSDP+TP
+    DeviceParameters(dp_shard=2, tensor_parallel=2, pipeline_parallel=2),  # 3D
+]
+```
+
+3. **Monitor Scaling Efficiency**
+```python
+# Perfect scaling: 2x GPUs = 2x throughput
+scaling_efficiency = (
+    throughput_ngpus / throughput_1gpu
+) / n_gpus
+
+# Good: >0.8
+# Okay: 0.6-0.8  
+# Poor: <0.6 (reconsider strategy)
+```
+
+### 1. FSDP Prefetching
+
+```python
+from dream_trainer.callbacks import OptimizeFSDP
+
+config.callbacks = CallbackCollection([
+    OptimizeFSDP(prefetch=2),  # Prefetch next 2 modules
+])
+```
+
+### 2. Async Tensor Parallelism
+
+```python
+config = DeviceParameters(
+    tensor_parallel=4,
+    async_tensor_parallel=True,  # Overlap TP comms
+)
+```
+
+### 3. Compiled Autograd
+
+```python
+config = DeviceParameters(
+    compile_model=True,
+    enable_compiled_autograd=True,  # Compile backward too
+)
+```
+
+### 4. Communication Optimization
+
+```python
+# Set NCCL environment variables
+import os
+os.environ["NCCL_ALGO"] = "Tree"  # Better for small messages
+os.environ["NCCL_PROTO"] = "Simple"  # Lower latency
+os.environ["NCCL_NSOCKS_PERTHREAD"] = "4"
+os.environ["NCCL_SOCKET_NTHREADS"] = "8"
+```
+
+### 5. Batch Size Optimization
+
+Based on gradient noise scale theory:
+
+```python
+# Start with smaller batch size
+initial_batch_size = 256
+
+# Measure gradient noise scale
+# (See "An Empirical Model of Large-Batch Training")
+
+# Progressively increase batch size during training
+schedule = {
+    0: 256,        # Initial: high gradient noise
+    100_000: 512,  # Model improving, can use larger batches
+    500_000: 1024, # Near convergence, maximize efficiency
+}
+```
+
+## Debugging Tips
+
+### 1. Verify Sharding
+
+```python
+def training_step(self, batch, batch_idx):
+    if batch_idx == 0:
+        # Check parameter sharding
+        for name, param in self.model.named_parameters():
+            if hasattr(param, 'placements'):
+                print(f"{name}: {param.placements}")
+```
+
+### 2. Monitor Memory Usage
+
+```python
+from dream_trainer.utils import log_memory_usage
+
+def training_step(self, batch, batch_idx):
+    log_memory_usage("before_forward")
+    output = self.model(batch)
+    log_memory_usage("after_forward")
+```
+
+### 3. Profile Communication
+
+```python
+import torch.distributed as dist
+
+# Enable NCCL debug logging
+os.environ["NCCL_DEBUG"] = "INFO"
+
+# Profile with PyTorch profiler
+with torch.profiler.profile(
+    activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+    record_shapes=True,
+    profile_memory=True,
+    with_stack=True
+) as prof:
+    trainer.fit()
+```
+
+### 4. Test Incrementally
+
+1. Start with single GPU
+2. Add DP (either DDP or FSDP)
+3. Add TP
+4. Add PP
+5. Combine strategies
+
+## Best Practices
+
+1. **Understand Your Bottleneck**
+   - Memory bound? → Use FSDP or PP
+   - Compute bound? → Use TP for large matmuls
+   - Communication bound? → Optimize placement based on topology
+
+2. **Profile Before Optimizing**
+   - Measure baseline single-GPU performance
+   - Identify whether you're compute or memory bound
+   - Profile communication patterns
+
+3. **Consider Total System Design**
+   - Network topology (NVLink vs InfiniBand vs Ethernet)
+   - Model architecture (depth vs width)
+   - Batch size requirements (gradient noise scale)
+
+4. **Use Self-Parallelizing Models**
+   - Encapsulate complexity in model definitions
+   - Makes experimentation easier
+   - Improves code reusability
+
+5. **Test Scaling Incrementally**
+   - Start with single GPU
+   - Add data parallelism
+   - Add model parallelism only if needed
+   - Verify near-linear scaling at each step
 
 ## Next Steps
 
-- Read the [Configuration Guide](configuration.md) for detailed settings
-- Check [Examples](examples/advanced.md) for complete working code
-- See [Best Practices](best-practices.md) for optimization tips
+- Read the [Configuration Guide](configuration.md) for detailed parameter options
+- Check [Examples](examples/advanced.md) for real-world parallelism usage
+- See [Performance Guide](performance.md) for optimization tips
+- Review [Jeremy Jordan's distributed training guide](https://www.jeremyjordan.me/distributed-training/) for more theory
+
+---
+
+**Remember**: The best parallelism strategy depends on your model architecture, hardware topology, and training requirements. Dream Trainer gives you the flexibility to experiment and find what works best! 🚀

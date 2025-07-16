@@ -1,6 +1,6 @@
 [project]
 name = "dream-trainer"
-version = "0.1.0"
+version = "0.1.1"
 description = "Add your description here"
 readme = "README.md"
 authors = [
@@ -38,7 +38,9 @@ dev = [
 ]
 docs = [
     "jinja2>=3.1.3",
+    "mkdocs-git-revision-date-localized-plugin>=1.4.7",
     "mkdocs-material==9.*",
+    "mkdocs-minify-plugin>=0.8.0",
     "mkdocstrings[python]>=0.29.1",
 ]
 
@@ -55,4 +57,6 @@ lint.ignore = ["F722", "E731", "F821", "E741"]
 
 [tool.uv.sources]
 torchft = { git = "https://github.com/pytorch/torchft.git" }
-dist-util = { workspace = true }
+
+[tool.uv.workspace]
+members = ["examples/llama3"]
