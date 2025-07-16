@@ -41,9 +41,9 @@ def materialize_distributed_module(
             # module has no parameters or buffers
             continue
         if callable(reset_method := getattr(submodule, "reset_parameters", None)):
-            reset_method()
+            reset_method()  # type: ignore
         else:
-            uninitialized_modules.add(type(submodule).__name__)
+            uninitialized_modules.add(f"{type(module).__name__}.{type(submodule).__name__}")
 
         # move buffers to device
         for name, buffer in submodule.named_buffers(recurse=False):
