@@ -1,4 +1,6 @@
+import os
 import shutil
+from functools import cached_property
 from pathlib import Path
 from typing import Any
 
@@ -6,9 +8,11 @@ import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint as dcp
 from torch import Tensor
+from torch.distributed import ReduceOp
 from typing_extensions import override
 
 from dream_trainer.configs import CheckpointParameters
+from dream_trainer.trainer import DreamTrainer
 from dream_trainer.utils import logger
 
 from ..callback import Callback
@@ -16,7 +20,7 @@ from .types import Checkpoint
 from .utils import find_checkpoints, find_current_checkpoint
 
 
-class CheckpointCallback(Callback):
+class CheckpointCallback(Callback[DreamTrainer]):
     """
     Base checkpoint callback that implements the entire checkpointing
     workflow except for storage-specific details. Subclasses must supply
@@ -26,16 +30,44 @@ class CheckpointCallback(Callback):
 
     config: CheckpointParameters
 
-    # Paths
-    _root_dir: Path
-    _checkpoint_dir: Path
-
     # State
     _current_metric: Tensor | None
     _did_resume: bool
 
     def __init__(self, config: CheckpointParameters):
         self.config = config
+
+    ##############
+    # Properties #
+    ##############
+
+    @cached_property
+    def root_dir(self) -> Path:
+        return (
+            Path(self.config.root_dir)
+            / self.trainer.project
+            / self.trainer.group
+            / self.trainer.experiment
+            / "checkpoints"
+        )
+
+    @property
+    def should_checkpoint(self) -> bool:
+        if self.config.checkpoint_every_n_epochs is not None:
+            return (
+                self.trainer.current_epoch > 0
+                and self.trainer.current_epoch % self.config.checkpoint_every_n_epochs == 0
+            )
+
+        if self.config.checkpoint_every_n_steps is not None:
+            return (
+                self.trainer.global_step > 0
+                and self.trainer.global_step % self.config.checkpoint_every_n_steps == 0
+            )
+
+        raise ValueError(
+            "If checkpointing is enabled, one of checkpoint_every_n_epochs or checkpoint_every_n_steps must be set"
+        )
 
     # ##################
     # Metric Reporting #
@@ -54,8 +86,8 @@ class CheckpointCallback(Callback):
         if not isinstance(metric, Tensor):
             metric = torch.tensor(metric)
 
-        if metric.shape != torch.Size([]):
-            raise ValueError("Metric must be a scalar tensor")
+        if metric.numel() != 1:
+            raise ValueError(f"Metric must be a scalar tensor, got {metric.shape}")
 
         self._current_metric = metric
 
@@ -63,94 +95,83 @@ class CheckpointCallback(Callback):
     # Common Checkpoint Loading & Saving #
     # ####################################
 
-    def load(self):
-        current_checkpoint = find_current_checkpoint(
-            self._checkpoint_dir, self.config.resume_mode
-        )
-        if current_checkpoint is None:
-            logger.info(f"Training {self.trainer.experiment} from scratch")
-            return
-
-        logger.info(
-            f"Loading checkpoint {current_checkpoint.checkpoint_id} for {self.trainer.experiment}",
-        )
-
-        state_dict = self.trainer.state_dict()
+    def _load(self, checkpoint: Checkpoint, state_dict: dict[str, Any]):
+        logger.info(f"Loading checkpoint {checkpoint.checkpoint_id}")
         dcp.state_dict_loader.load(
             state_dict,
-            checkpoint_id=str(self._checkpoint_dir / current_checkpoint.checkpoint_id),
+            checkpoint_id=str(self.root_dir / checkpoint.checkpoint_id),
             process_group=self.pg,
         )
+        logger.info(f"Resumed {self.trainer.experiment} from step {checkpoint.step}")
+        self.trainer.world.barrier()
+
+    def _save(self, checkpoint: Checkpoint):
+        logger.info(f"Saving checkpoint {checkpoint.checkpoint_id}")
+        dcp.state_dict_saver.save(
+            self.trainer.state_dict(),
+            checkpoint_id=str(self.root_dir / checkpoint.checkpoint_id),
+            process_group=self.pg,
+        )
+        logger.info(f"Saved checkpoint to {self.root_dir / checkpoint.checkpoint_id}")
+        self._cleanup_checkpoints()
+        self.trainer.world.barrier()
+
+    def load(self, checkpoint: Checkpoint):
+        self._load(checkpoint, self.trainer.state_dict())
 
         self._did_resume = True
         self._current_metric = None
 
-        self.trainer.world.barrier()
-        logger.info(
-            f"Resumed {self.trainer.experiment} from step {current_checkpoint.step}",
-        )
-
-    def _save(self, checkpoint: Checkpoint):
-        state_dict = self.trainer.state_dict()
-        dcp.state_dict_saver.save(
-            state_dict,
-            checkpoint_id=str(self._checkpoint_dir / checkpoint.checkpoint_id),
-            process_group=self.pg,
-        )
-        self._cleanup_checkpoints()
-        self.trainer.world.barrier()
-
     def save(self):
-        if self._current_metric is None:
-            if self._did_resume:
-                # Skip saving as we just loaded the checkpoint
-                self._did_resume = False
-                return
-            else:
-                raise ValueError(
-                    f"Monitoring {self.config.monitor} but it was not reported in the last epoch"
-                )
+        if self._did_resume:
+            self._did_resume = False
+            return  # Skip saving as we just loaded the checkpoint
 
-        current_metric = self.trainer.world.all_reduce(self._current_metric, op="mean")
-        assert isinstance(current_metric, Tensor) and current_metric.numel() == 1, (
-            f"Monitored checkpoint metric must be a scalar tensor, got {current_metric}"
+        if self._current_metric is None:
+            raise ValueError(f"{self.config.monitor} was not reported in the last epoch")
+
+        self.trainer.world.all_reduce(self._current_metric, op=ReduceOp.AVG)
+        checkpoint = Checkpoint(
+            step=self.trainer.global_step, metric=self._current_metric.item()
         )
-        checkpoint = Checkpoint(step=self.trainer.global_step, metric=current_metric.item())
 
         self._save(checkpoint)
-        logger.info(f"Saved checkpoint to {checkpoint.checkpoint_id}")
-        self._cleanup_checkpoints()
 
     # ################
     # Callback Hooks #
     # ################
 
     @override
+    def pre_launch(self):
+        # Remove the callback if checkpointing is disabled
+        if not self.config.enable:
+            self.trainer.callbacks.pop(self.__class__.__name__)
+
+    @override
     def post_setup(self):
         # Setup paths
-        self._root_dir = (
-            Path(self.config.root_dir)
-            / self.trainer.project
-            / self.trainer.group
-            / self.trainer.experiment
-            / "checkpoints"
-        )
+        os.makedirs(self.root_dir, exist_ok=True)
 
-        # Setup process group
+        # Setup process group for loading and saving
         self.pg = dist.new_group(backend="gloo")
         self._did_resume = False
         self._current_metric = None
 
-    # Load & save for fit
-
     @override
     def pre_fit(self):
-        self.load()
+        # Load a checkpoint if it exists
+        checkpoint = find_current_checkpoint(self.root_dir, self.config.resume_mode)
+        if checkpoint is None:
+            logger.info(f"Training {self.trainer.experiment} from scratch")
+            return
+
+        self.load(checkpoint)
 
     @override
     def post_fit(self):
         if self._current_metric is None:
             return
+
         self.save()
 
     # Report metrics
@@ -160,36 +181,18 @@ class CheckpointCallback(Callback):
         self._report_metric(result)
 
     @override
-    def post_validation_epoch(self, result: dict[str, Any]):
-        self._report_metric(result)
-        if (
-            self.config.checkpoint_every_n_epochs is not None
-            and self.trainer.current_epoch % self.config.checkpoint_every_n_epochs == 0
-        ) or (
-            self.config.checkpoint_every_n_steps is not None
-            and self.trainer.global_step % self.config.checkpoint_every_n_steps == 0
-        ):
-            self.save()
-
-    @override
     def pre_train_epoch(self):
-        if (
-            self.config.checkpoint_every_n_epochs is not None
-            and self.trainer.current_epoch % self.config.checkpoint_every_n_epochs == 0
-        ):
+        # Checkpointing runs at the start of each epoch
+        if self.should_checkpoint:
             self.save()
 
     def _cleanup_checkpoints(self):
-        if self.config.keep_top_k <= 0:
-            return
-
-        checkpoints = find_checkpoints(self._checkpoint_dir, self.config.resume_mode)
-        purge_checkpoints = checkpoints[-self.config.keep_top_k :]
+        checkpoints = find_checkpoints(self.root_dir, self.config.resume_mode)
+        purge_checkpoints = checkpoints[self.config.keep_top_k :]
 
         if self.trainer.world.is_global_zero:
             for checkpoint in purge_checkpoints:
+                print(f"Purging checkpoint {checkpoint.checkpoint_id}")
                 # TODO: Work with cloud storage
-                shutil.rmtree(
-                    self._checkpoint_dir / checkpoint.checkpoint_id, ignore_errors=True
-                )
+                shutil.rmtree(self.root_dir / checkpoint.checkpoint_id, ignore_errors=True)
         self.trainer.world.barrier()

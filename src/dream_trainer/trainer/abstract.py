@@ -74,10 +74,10 @@ class AbstractTrainer(ABC):
 
         self.world = DistributedWorld(config.device_parameters)
 
-        # Trainer State:  NOTE: Keep track of these yourself
+        # Trainer State:  NOTE: Keep track of these yourself when subclassing
         self.global_step = 0  # Number of optimizer steps taken
-        self.local_batches = 0  # Number of batches processed since program start
-        self.current_epoch = 0
+        self.current_epoch = 0  # Number of epochs processed
+        self.local_batches = 0  # Number of batches since fit start (invariant to resumption)
 
     @abstractmethod
     def named_models(self) -> dict[str, "nn.Module"]:

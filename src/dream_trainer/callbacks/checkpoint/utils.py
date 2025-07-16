@@ -9,14 +9,12 @@ def sort_checkpoints(
     checkpoints: list[Checkpoint],
     mode: Literal["min", "max", "last"],
 ) -> list[Checkpoint]:
-    checkpoints = sorted(checkpoints, key=lambda c: c.step)
-
     if mode == "last":
-        return checkpoints
+        return sorted(checkpoints, key=lambda c: c.step, reverse=True)
     elif mode == "min":
-        return sorted(checkpoints, key=lambda c: c.metric)
+        return sorted(checkpoints)
     elif mode == "max":
-        return sorted(checkpoints, key=lambda c: c.metric, reverse=True)
+        return sorted(checkpoints, reverse=True)
     else:
         raise ValueError(f"Invalid resume mode {mode}")
 
@@ -24,12 +22,14 @@ def sort_checkpoints(
 def find_checkpoints(
     checkpoint_dir: Path, mode: Literal["min", "max", "last"] = "last"
 ) -> list[Checkpoint]:
-    checkpoints = []
-    for f in os.listdir(checkpoint_dir):
-        try:
-            checkpoints.append(Checkpoint.from_path(checkpoint_dir / f))
-        except ValueError:
-            pass
+    """
+    Finds all checkpoints in the given directory and sorts them by the given mode.
+    """
+    checkpoints = [
+        Checkpoint.from_path(checkpoint_dir / f)
+        for f in os.listdir(checkpoint_dir)
+        if Checkpoint.is_valid_checkpoint_path(checkpoint_dir / f)
+    ]
 
     return sort_checkpoints(checkpoints, mode)
 
@@ -39,8 +39,7 @@ def find_top_k_checkpoints(
     mode: Literal["min", "max", "last"],
     k: int = 1,
 ) -> list[Checkpoint]:
-    checkpoints = find_checkpoints(checkpoint_dir, mode)
-    return checkpoints[:k]
+    return find_checkpoints(checkpoint_dir, mode)[:k]
 
 
 def find_current_checkpoint(
@@ -48,6 +47,4 @@ def find_current_checkpoint(
     mode: Literal["min", "max", "last"],
 ) -> Checkpoint | None:
     checkpoints = find_top_k_checkpoints(checkpoint_dir, mode, k=1)
-    if len(checkpoints) == 0:
-        return None
-    return checkpoints[0]
+    return checkpoints[0] if len(checkpoints) == 1 else None
