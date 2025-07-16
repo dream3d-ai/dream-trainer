@@ -115,7 +115,11 @@ class BaseTrainer(AbstractTrainer):
                 "current_epoch": self.current_epoch,
                 "callbacks": self.callbacks.state_dict(),
             },
-            "models": {name: model.state_dict() for name, model in self.named_models().items()},
+            "models": {
+                name: model.state_dict()
+                for name, model in self.named_models().items()
+                if any(p.requires_grad for p in model.parameters())
+            },
             "optimizers": {
                 name: optimizer.state_dict()
                 for name, optimizer in self.named_optimizers().items()
@@ -152,7 +156,7 @@ class BaseTrainer(AbstractTrainer):
         trainer_state = state_dict.pop("trainer")
         self.global_step = trainer_state.pop("global_step")
         self.current_epoch = trainer_state.pop("current_epoch")
-        self.callbacks.load_state_dict(trainer_state.pop("callbacks"), self)
+        self.callbacks.load_state_dict(trainer_state.pop("callbacks"))
 
         # Load Model State
         for name, model in self.named_models().items():
@@ -193,7 +197,7 @@ class BaseTrainer(AbstractTrainer):
         try:
             self._fit()
         finally:
-            # TODO: close the checkpointer
+            self.callbacks.on_interrupt()
 
             if torch.distributed.is_initialized():
                 torch.distributed.destroy_process_group()
@@ -302,13 +306,13 @@ class BaseTrainer(AbstractTrainer):
         total_norm = self.total_gradient_norm(parameters, p=2, foreach=True)
         self.clip_gradient_norm(parameters, total_norm, foreach=True)
 
-        self.callbacks.pre_optimizer_step(self, model, optimizer)
+        self.callbacks.pre_optimizer_step(model, optimizer)
         optimizer.step()
-        self.callbacks.post_optimizer_step(self, model, optimizer)
+        self.callbacks.post_optimizer_step(model, optimizer)
 
-        self.callbacks.pre_optimizer_zero_grad(self, model, optimizer)
+        self.callbacks.pre_optimizer_zero_grad(model, optimizer)
         optimizer.zero_grad()
-        self.callbacks.post_optimizer_zero_grad(self, model, optimizer)
+        self.callbacks.post_optimizer_zero_grad(model, optimizer)
 
         if (scheduler := self.get_scheduler_from_optimizer(optimizer)) is not None:
             with warnings.catch_warnings():
@@ -462,9 +466,7 @@ class BaseTrainer(AbstractTrainer):
             contextlib.ExitStack: A stacked context manager that applies all
                 training-related contexts.
         """
-        return stacked_context(
-            [self.world.train_context()] + self.callbacks.train_context(self)
-        )
+        return stacked_context([self.world.train_context()] + self.callbacks.train_context())
 
     def perform_training_epoch(self):
         """
@@ -489,7 +491,8 @@ class BaseTrainer(AbstractTrainer):
             return
 
         self.train()
-        self.callbacks.pre_train_epoch(self)
+        self.world.barrier()
+        self.callbacks.pre_train_epoch()
 
         batch_idx = 0
         for batch in self.train_dataloader:
@@ -506,11 +509,11 @@ class BaseTrainer(AbstractTrainer):
             )
 
             # Train Step
-            self.callbacks.pre_train_step(self, batch, batch_idx)
+            self.callbacks.pre_train_step(batch, batch_idx)
             with self.train_context():
                 result = self.training_step(batch, batch_idx)
 
-            self.callbacks.post_train_step(self, result, batch_idx)
+            self.callbacks.post_train_step(result, batch_idx)
             self.local_batches += 1
 
             if not self.is_accumulating_gradients:
@@ -541,7 +544,7 @@ class BaseTrainer(AbstractTrainer):
                 f"Expected {self._num_train_steps} batches, received {batch_idx + 1}"
             )
 
-        self.callbacks.post_train_epoch(self, result)
+        self.callbacks.post_train_epoch(result)
 
     @torch.no_grad()
     def perform_validation_epoch(self):
@@ -565,9 +568,8 @@ class BaseTrainer(AbstractTrainer):
             return
 
         self.eval()
-
-        # Validation Epoch Start
-        self.callbacks.pre_validation_epoch(self)
+        self.world.barrier()
+        self.callbacks.pre_validation_epoch()
 
         # Validation Epoch Loop
         batch_idx = 0
@@ -582,12 +584,12 @@ class BaseTrainer(AbstractTrainer):
                 dtype=torch.Tensor,
             )
 
-            self.callbacks.pre_validation_step(self, batch, batch_idx)
+            self.callbacks.pre_validation_step(batch, batch_idx)
 
-            with stacked_context(self.callbacks.validation_context(self)):
+            with stacked_context(self.callbacks.validation_context()):
                 result = self.validation_step(batch, batch_idx)
 
-            self.callbacks.post_validation_step(self, result, batch_idx)
+            self.callbacks.post_validation_step(result, batch_idx)
             batch_idx += 1
 
         if (batch_idx + 1) < self._num_val_steps:
@@ -597,7 +599,7 @@ class BaseTrainer(AbstractTrainer):
             )
 
         # Validation Epoch End
-        self.callbacks.post_validation_epoch(self, result)
+        self.callbacks.post_validation_epoch(result)
 
     def perform_sanity_validation_steps(self):
         """
@@ -692,23 +694,23 @@ class BaseTrainer(AbstractTrainer):
         Each stage is wrapped with appropriate callbacks and barriers
         to ensure synchronization in distributed training.
         """
-        self.callbacks.pre_launch(self)
+        self.callbacks.pre_launch()
         self.world.launch()
         seed_everything(self.seed)
 
-        self.callbacks.pre_configure(self)
+        self.callbacks.pre_configure()
         self.configure()
-        self.callbacks.post_configure(self)
+        self.callbacks.post_configure()
         self.world.barrier()
 
-        self.callbacks.pre_setup(self)
+        self.callbacks.pre_setup()
         self.setup()
         self._setup_trainer_metadata()
-        self.callbacks.post_setup(self)
+        self.callbacks.post_setup()
         self.world.barrier()
 
         # Begin Training
-        self.callbacks.pre_fit(self)
+        self.callbacks.pre_fit()
 
         # Sanity Validation Steps
         self.perform_sanity_validation_steps()
@@ -717,11 +719,11 @@ class BaseTrainer(AbstractTrainer):
         # Fit Loop
         n_epochs = self.training_parameters.n_epochs
         for _ in range(n_epochs) if n_epochs is not None else repeat(0):
-            self.callbacks.pre_epoch(self)
+            self.callbacks.pre_epoch()
             self.perform_training_epoch()  # Validation handled in training epoch
-            self.callbacks.post_epoch(self)
+            self.callbacks.post_epoch()
 
             self.current_epoch += 1
 
         # Fit End
-        self.callbacks.post_fit(self)
+        self.callbacks.post_fit()
