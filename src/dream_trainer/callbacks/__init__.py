@@ -4,6 +4,7 @@ from .graph_breaks import FindGraphBreaksCallback
 from .loggers import LoggerCallback, MediaLoggerCallback
 from .profile import ProfileCallback
 from .progress_bar import ProgressBar
+from .weight_transfer import WeightTransferCallback
 
 try:
     from .trainer_summary import TrainerSummary
@@ -52,4 +53,5 @@ __all__ = [
     "ProgressBar",
     "ModelWatchCallback",
     "OptimizeFSDP",
+    "WeightTransferCallback",
 ]
