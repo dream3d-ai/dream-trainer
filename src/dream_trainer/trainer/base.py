@@ -60,7 +60,7 @@ class BaseTrainer(AbstractTrainer):
 
     # Internal State
     _train_batch_size: int
-    _num_train_steps: int
+    _num_train_batches: int
     _num_gradient_accumulation_steps: int
 
     _num_val_steps: int
@@ -196,6 +196,9 @@ class BaseTrainer(AbstractTrainer):
         """
         try:
             self._fit()
+        except Exception as e:
+            logger.error(f"Training failed: {e}")
+            raise
         finally:
             self.callbacks.on_interrupt()
 
@@ -303,6 +306,9 @@ class BaseTrainer(AbstractTrainer):
             torch.Tensor: The total norm of the gradients before clipping.
         """
         parameters = [p for p in model.parameters() if p.grad is not None]
+        if len(parameters) == 0:
+            raise RuntimeError("Tried to step model with no gradients on any of its parameters")
+
         total_norm = self.total_gradient_norm(parameters, p=2, foreach=True)
         self.clip_gradient_norm(parameters, total_norm, foreach=True)
 
@@ -339,7 +345,7 @@ class BaseTrainer(AbstractTrainer):
         with self.world.loss_parallel():
             yield
 
-    def backward(self, loss: torch.Tensor):
+    def backward(self, loss: torch.Tensor, **kwargs):
         """
         Backward pass for loss, with gradient accumulation scaling and autocast disabled.
 
@@ -352,8 +358,9 @@ class BaseTrainer(AbstractTrainer):
 
         Args:
             loss (torch.Tensor): The computed loss tensor to backpropagate.
+            **kwargs: Additional arguments to pass to the backward method.
         """
-        (loss / self._num_gradient_accumulation_steps).backward()
+        (loss / self._num_gradient_accumulation_steps).backward(**kwargs)
 
     @contextlib.contextmanager
     def no_gradient_sync(self, *models: nn.Module):
@@ -365,39 +372,27 @@ class BaseTrainer(AbstractTrainer):
             with self.no_gradient_sync(self.model):
                 loss.backward()
         """
+
         if self.world.world_size == 1 or self._num_gradient_accumulation_steps == 1:
             # If no gradient accumulation or in single process environment, don't sync gradients
             yield
             return
+
+        # Keep track of previous state (only update on transition)
+        self._was_accumulating_gradients = getattr(self, "_was_accumulating_gradients", False)
 
         assert all(isinstance(model, (FSDPModule, DDPModule)) for model in models), (
             f"Expected all modules to be FSDPModule or DDPModule, got {[type(model).__name__ for model in models]}"
         )
         distributed_modules = cast(tuple[FSDPModule | DDPModule, ...], models)
 
-        current_accumulation_step = (
-            self.local_batches + 1
-        ) % self._num_gradient_accumulation_steps
-
-        # Only update flags when transitioning between states
-        is_first_accumulation_step = (
-            current_accumulation_step == 1 and not self._is_last_training_batch
-        )
-        is_last_accumulation_step = (
-            current_accumulation_step == 0 or self._is_last_training_batch
-        )
-
-        if is_first_accumulation_step:
-            # Set requires_gradient_sync to False only on first accumulation step (unless last batch)
+        if self._was_accumulating_gradients != self.is_accumulating_gradients:
             for model in distributed_modules:
-                model.set_requires_gradient_sync(False)
-
-        # Set is_last_backward to True on second-to-last step OR if it's the last training batch
-        if is_last_accumulation_step:
-            for model in distributed_modules:
-                model.set_requires_gradient_sync(True)
+                model.set_requires_gradient_sync(not self.is_accumulating_gradients)
                 if isinstance(model, FSDPModule):
-                    model.set_is_last_backward(True)
+                    model.set_is_last_backward(not self.is_accumulating_gradients)
+
+        self._was_accumulating_gradients = self.is_accumulating_gradients
 
         yield
 
@@ -409,9 +404,8 @@ class BaseTrainer(AbstractTrainer):
         error_if_nonfinite=False,
         foreach: bool | None = None,
     ):
-        grads = [param for param in parameters if param.grad is not None]
         return self.world.get_total_norm(
-            parameters=grads,
+            parameters=parameters,
             norm_type=p,
             error_if_nonfinite=error_if_nonfinite,
             foreach=foreach,
@@ -440,20 +434,30 @@ class BaseTrainer(AbstractTrainer):
         Check if currently accumulating gradients.
 
         Returns True if the current step is a gradient accumulation step
-        (i.e., gradients are being accumulated but not yet applied).
+        (i.e., gradients are being updated but no optimizer step is being taken).
         Returns False if this is the step where accumulated gradients
         will be applied, or if we're on the last training batch.
 
         Returns:
             bool: True if accumulating gradients, False if applying them.
         """
+        # No longer accumulating gradients if and of the following is true:
+        # - Completed num_gradient_accumulation_steps
+        # - Is the last training batch in the epoch
+        # - Is about to perform validation
+
         return (
-            (self.local_batches + 1) % self._num_gradient_accumulation_steps != 0
-        ) and not self._is_last_training_batch
+            ((self.local_batches + 1) % self._num_gradient_accumulation_steps != 0)
+            and not self._is_last_training_batch
+            and not (int(self._num_train_batches * self.training_parameters.val_frequency))
+        )
 
     ######################
     # Model Fitting Loop #
     ######################
+
+    def pre_fit(self):
+        pass
 
     def train_context(self):
         """
@@ -487,7 +491,7 @@ class BaseTrainer(AbstractTrainer):
             RuntimeError: If fewer batches are received than expected, which
                 may indicate data loading issues in distributed training.
         """
-        if self._num_train_steps <= 0:
+        if self._num_train_batches <= 0:
             return
 
         self.train()
@@ -496,10 +500,10 @@ class BaseTrainer(AbstractTrainer):
 
         batch_idx = 0
         for batch in self.train_dataloader:
-            if batch_idx >= self._num_train_steps:
+            if batch_idx >= self._num_train_batches:
                 break
 
-            self._is_last_training_batch = batch_idx == self._num_train_steps - 1
+            self._is_last_training_batch = batch_idx == self._num_train_batches - 1
 
             # Move batch to device, non-blocking
             batch = apply_to_collection(
@@ -532,16 +536,16 @@ class BaseTrainer(AbstractTrainer):
 
             # Validation Epoch
             if (
-                self.global_step
-                % int(self._num_train_steps * self.training_parameters.val_frequency)
-            ) == 0 and not self.is_accumulating_gradients:
+                (self.global_step + 1)
+                % int(self._num_train_batches * self.training_parameters.val_frequency)
+            ) == 0:
                 self.perform_validation_epoch()
                 self.train()
 
-        if (batch_idx + 1) < self._num_train_steps:
+        if (batch_idx + 1) < self._num_train_batches:
             raise RuntimeError(
                 f"Worker {self.world.world_mesh.get_rank() if self.world.world_mesh is not None else 'unknown'} received fewer training batches than expected. "
-                f"Expected {self._num_train_steps} batches, received {batch_idx + 1}"
+                f"Expected {self._num_train_batches} batches, received {batch_idx + 1}"
             )
 
         self.callbacks.post_train_epoch(result)
@@ -644,7 +648,7 @@ class BaseTrainer(AbstractTrainer):
         # Setup dataloader metadata
         (
             self._train_batch_size,
-            self._num_train_steps,
+            self._num_train_batches,  # num_train_steps_per_epoch
             self._num_gradient_accumulation_steps,
         ) = get_train_dataloader_steps(
             self.train_dataloader,
@@ -663,7 +667,7 @@ class BaseTrainer(AbstractTrainer):
         assert dist_ops.global_agreement(self._train_batch_size), (
             "`train_batch_size` must be the same across all ranks"
         )
-        assert dist_ops.global_agreement(self._num_train_steps), (
+        assert dist_ops.global_agreement(self._num_train_batches), (
             "`num_train_steps` must be the same across all ranks"
         )
         assert dist_ops.global_agreement(self._num_gradient_accumulation_steps), (
@@ -711,6 +715,7 @@ class BaseTrainer(AbstractTrainer):
 
         # Begin Training
         self.callbacks.pre_fit()
+        self.pre_fit()
 
         # Sanity Validation Steps
         self.perform_sanity_validation_steps()

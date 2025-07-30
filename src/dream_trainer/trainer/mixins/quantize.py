@@ -93,7 +93,7 @@ class ExcludeModuleByName(QuantizeModuleFilter):
             return False
 
         if not isinstance(module, nn.Linear):
-            raise ValueError(f"Exclusion list contains a non nn.Linear module: {name}")
+            return False
 
         # All dims must be divisible by 16 due to float8 tensorcore hardware requirements.
         dims_multiples_of_16 = (
@@ -104,7 +104,6 @@ class ExcludeModuleByName(QuantizeModuleFilter):
                 f"Linear layer {name} has in_features or out_features not divisible by 16. "
                 "Please explicitly exclude this module from FP8 quantization."
             )
-            return False
 
         return True
 

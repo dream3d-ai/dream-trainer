@@ -57,8 +57,7 @@ class AsyncCheckpointCallback(CheckpointCallback):
                 f"Saved checkpoint to {self.root_dir / checkpoint.checkpoint_id}"
             )
         )
-
-        self._cleanup_checkpoints()
+        self._save_future.add_done_callback(self._cleanup_checkpoints)
 
     @override
     def _load(self, checkpoint: Checkpoint, state_dict: dict[str, Any]):

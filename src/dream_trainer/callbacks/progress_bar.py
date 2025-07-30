@@ -1,3 +1,4 @@
+import sys
 import time
 from typing import Any, MutableMapping
 
@@ -38,6 +39,7 @@ class factorized_tqdm(tqdm):
         super().__init__(
             *args,
             bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix} (Loop:{loop_time}, Latency: {serve_time})]",
+            file=sys.stdout,
             **kwargs,
         )
 
@@ -106,14 +108,14 @@ class ProgressBar(Callback[BaseTrainer]):
         self.epoch_tqdm.refresh()
 
         self.training_tqdm = factorized_tqdm(
-            total=self.trainer._num_train_steps
+            total=self.trainer._num_train_batches
             // self.trainer._num_gradient_accumulation_steps,
             desc="Training",
             position=1,
             leave=True,
             smoothing=self.smoothing,
         )
-        self.training_tqdm.update(self.trainer.global_step % self.trainer._num_train_steps)
+        self.training_tqdm.update(self.trainer.global_step % self.trainer._num_train_batches)
         self.training_tqdm.refresh()
 
         self.validation_tqdm = factorized_tqdm(
@@ -131,7 +133,7 @@ class ProgressBar(Callback[BaseTrainer]):
     @override
     def pre_train_epoch(self):
         self.training_tqdm.reset(
-            self.trainer._num_train_steps // self.trainer._num_gradient_accumulation_steps
+            self.trainer._num_train_batches // self.trainer._num_gradient_accumulation_steps
         )
         self.training_tqdm._start_time = time.perf_counter()
 

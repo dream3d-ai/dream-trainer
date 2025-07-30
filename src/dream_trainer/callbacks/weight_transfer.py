@@ -52,8 +52,8 @@ class WeightTransferCallback(Callback[DreamTrainer]):
         self,
         source: str | Callable[[ProcessGroup | None], nn.Module],
         target: str,
-        mapping: dict[str, None | str | tuple[str, Callable[[Tensor], Tensor]]],
-        delete_source: bool = False,
+        mapping: dict[str, None | str | tuple[str, Callable[[Tensor], Tensor]]] = {},
+        delete_source: bool = True,
     ):
         self.source = source
         self.target = target
@@ -61,15 +61,17 @@ class WeightTransferCallback(Callback[DreamTrainer]):
         self.delete_source = delete_source
 
     def post_setup(self):
+        self.target_model = self.trainer.get_module(self.target)
+
         if isinstance(self.source, str):
-            source = self.trainer.get_module(self.source)
+            self.source_model = self.trainer.get_module(self.source)
         else:
             tp_mesh = self.trainer.world.get_mesh("tp")
             process_group = tp_mesh.get_group() if tp_mesh is not None else None
-            source = self.source(process_group)
+            self.source_model = self.source(process_group)
 
-        source_state_dict = source.state_dict()
-        target_state_dict = self.trainer.get_module(self.target).state_dict()
+        source_state_dict = self.source_model.state_dict()
+        target_state_dict = self.target_model.state_dict()
 
         source_keys, target_keys = set(source_state_dict.keys()), set(target_state_dict.keys())
         self.mapping.update({k: k for k in target_keys - self.mapping.keys()})
@@ -78,9 +80,9 @@ class WeightTransferCallback(Callback[DreamTrainer]):
             v if isinstance(v, str) else v[0] for v in self.mapping.values() if v is not None
         }
 
-        assert target_keys == mapping_keys, (
-            f"Target model keys must match mapping keys. \n\n"
-            f"Found keys {mapping_keys - target_keys} in mapping but not in target model \n\n"
+        assert target_keys.issubset(mapping_keys), (
+            f"All target model keys must exist in the mapping. \n\n"
+            f"Found keys {target_keys - mapping_keys} in target model but not in mapping \n\n"
         )
         assert mapping_values.issubset(source_keys), (
             f"All mapping values (sources) must exist in source model or explicitly set to None. \n\n"
@@ -108,5 +110,5 @@ class WeightTransferCallback(Callback[DreamTrainer]):
 
         if self.delete_source:
             # Ensures the module no longer takes up memory (even if other objects store references)
-            source.to_empty(device="meta")
-            del source
+            self.source_model.to_empty(device="meta")
+            del self.source_model

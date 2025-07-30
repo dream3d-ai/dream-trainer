@@ -64,6 +64,7 @@ class LoggerCallback(RankZeroCallback[LoggerMixin]):
     @override
     def post_train_epoch(self, result: dict[str, torch.Tensor | int | float]):
         self.trainer.log_dict(filter_logs(result))
+        self.trainer.log_dict({"epoch": self.trainer.current_epoch})
 
     @override
     def post_validation_step(self, result: dict[str, Any], batch_idx: int):

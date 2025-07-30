@@ -232,13 +232,13 @@ class Callback(Generic[_AbstractTrainer]):
         """
         raise NotImplementedError("This function should never be called")
 
-    def train_context(self) -> contextlib._GeneratorContextManager:
+    def train_context(self) -> contextlib._GeneratorContextManager[None]:
         """
         Training steps happen under this context manager.
         """
         raise NotImplementedError("This function should never be called")
 
-    def validation_context(self) -> contextlib._GeneratorContextManager:
+    def validation_context(self) -> contextlib._GeneratorContextManager[None]:
         """
         Validation steps happen under this context manager.
         """

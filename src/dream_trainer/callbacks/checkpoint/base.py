@@ -1,3 +1,4 @@
+import gc
 import os
 import shutil
 from functools import cached_property
@@ -116,12 +117,15 @@ class CheckpointCallback(Callback[DreamTrainer]):
         self._cleanup_checkpoints()
         self.trainer.world.barrier()
 
+    @torch.no_grad()
     def load(self, checkpoint: Checkpoint):
+        gc.collect(generation=1)
         self._load(checkpoint, self.trainer.state_dict())
 
         self._did_resume = True
         self._current_metric = None
 
+    @torch.no_grad()
     def save(self):
         if self._did_resume:
             self._did_resume = False
@@ -135,7 +139,9 @@ class CheckpointCallback(Callback[DreamTrainer]):
             step=self.trainer.global_step, metric=self._current_metric.item()
         )
 
+        gc.collect(generation=1)
         self._save(checkpoint)
+        gc.collect(generation=1)
 
     # ################
     # Callback Hooks #
