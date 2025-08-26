@@ -507,6 +507,7 @@ class ModelSetupMixin(AbstractTrainer):
 
         unwrapped = requires_grad - wrapped
 
+        # TODO: this should check on a child-level basis
         assert len(unwrapped) == 0, (
             "All parameters that require gradients must be wrapped with fully_shard (or replicate if using DDP). "
             f"Unwrapped parameters: {unwrapped}"

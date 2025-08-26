@@ -2,6 +2,7 @@ import contextlib
 from typing import Any, Generic, Iterable, TypeVar, get_origin
 
 import torch.nn as nn
+from torch.distributed.checkpoint.stateful import Stateful
 from torch.optim import Optimizer
 
 from dream_trainer.trainer.abstract import AbstractTrainer
@@ -250,6 +251,16 @@ class Callback(Generic[_AbstractTrainer]):
     def load_state_dict(self, state_dict: dict[str, Any]):
         pass
 
+    def pop_self(self):
+        """
+        Remove the callback from the trainer.callbacks list.
+        """
+        assert hasattr(self.trainer, "callbacks") and isinstance(
+            getattr(self.trainer, "callbacks"), CallbackCollection
+        ), f"Cannot find CallbackCollection in Trainer {self.trainer.__class__.__name__}"
+
+        getattr(self.trainer, "callbacks").pop(self.__class__.__name__)
+
 
 class RankZeroCallback(Callback[_AbstractTrainer]):
     """
@@ -260,7 +271,7 @@ class RankZeroCallback(Callback[_AbstractTrainer]):
     pass
 
 
-class CallbackCollection(dict[str, Callback | RankZeroCallback]):
+class CallbackCollection(dict[str, Callback | RankZeroCallback], Stateful):
     def __init__(
         self,
         callbacks: Iterable[Callback | RankZeroCallback]

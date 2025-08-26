@@ -34,7 +34,7 @@ class EvalMetricMixin(SetupMixin):
     def _configure_metrics(self):
         self._metric_names: list[str] = []
 
-        with configuration_ctx(self, self._metric_names, MetricCollection | Metric):
+        with configuration_ctx(self, self._metric_names, MetricCollection, Metric):
             self.configure_metrics()
 
         for metric in self.named_metrics().values():

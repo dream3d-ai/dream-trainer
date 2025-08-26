@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Mapping
 
 import torch.nn as nn
 
@@ -58,8 +59,6 @@ class ExcludeModuleByName(QuantizeModuleFilter):
 
     This filter ensures that:
     - Explicitly excluded modules are not quantized
-    - Only nn.Linear modules are considered for quantization
-    - Linear modules have dimensions divisible by 16 (required for float8 tensorcore)
 
     Attributes:
         exclude: Set of module names to exclude from quantization
@@ -84,26 +83,10 @@ class ExcludeModuleByName(QuantizeModuleFilter):
 
         Returns:
             True if the module should be quantized, False otherwise
-
-        Raises:
-            ValueError: If the module is not nn.Linear or has dimensions not divisible by 16
         """
         if name in self.exclude:
             self.exclude.remove(name)
             return False
-
-        if not isinstance(module, nn.Linear):
-            return False
-
-        # All dims must be divisible by 16 due to float8 tensorcore hardware requirements.
-        dims_multiples_of_16 = (
-            module.weight.shape[0] % 16 == 0 and module.weight.shape[1] % 16 == 0
-        )
-        if not dims_multiples_of_16:
-            raise ValueError(
-                f"Linear layer {name} has in_features or out_features not divisible by 16. "
-                "Please explicitly exclude this module from FP8 quantization."
-            )
 
         return True
 
@@ -216,7 +199,7 @@ class QuantizeMixin(AbstractTrainer):
         return self._quantized_models
 
     @abstractmethod
-    def quantize_module_filters(self) -> dict[str, QuantizeModuleFilter]:
+    def quantize_module_filters(self) -> Mapping[str, QuantizeModuleFilter]:
         """
         Define module filters for quantization.
 

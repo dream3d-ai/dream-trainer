@@ -43,6 +43,10 @@ class LoggerCallback(RankZeroCallback[LoggerMixin]):
         self.log_every_n_val_batches = log_every_n_val_batches
         self.code_dir = code_dir
 
+        # Store train logs so we don't miss any when logging every N batches
+        self._accumulated_train_logs: dict[str, Any] = {}
+        self._accumulated_val_logs: dict[str, Any] = {}
+
     @override
     def pre_configure(self):
         self.trainer.log_config(self.trainer.config)
@@ -55,24 +59,33 @@ class LoggerCallback(RankZeroCallback[LoggerMixin]):
 
     @override
     def post_train_step(self, result: dict[str, torch.Tensor | int | float], batch_idx: int):
+        self._accumulated_train_logs.update(filter_logs(result))
+
         if (
             self.log_every_n_train_batches is None
             or batch_idx % self.log_every_n_train_batches == 0
         ):
-            self.trainer.log_dict(filter_logs(result))
+            self.trainer.log_dict(self._accumulated_train_logs)
+            self._accumulated_train_logs.clear()
+
+    @override
+    def pre_epoch(self):
+        self.trainer.log_dict({"trainer/epoch": self.trainer.current_epoch})
 
     @override
     def post_train_epoch(self, result: dict[str, torch.Tensor | int | float]):
         self.trainer.log_dict(filter_logs(result))
-        self.trainer.log_dict({"epoch": self.trainer.current_epoch})
 
     @override
     def post_validation_step(self, result: dict[str, Any], batch_idx: int):
+        self._accumulated_val_logs.update(filter_logs(result))
+
         if (
             self.log_every_n_val_batches is None
             or batch_idx % self.log_every_n_val_batches == 0
         ):
-            self.trainer.log_dict(filter_logs(result))
+            self.trainer.log_dict(self._accumulated_val_logs)
+            self._accumulated_val_logs.clear()
 
     @override
     def post_validation_epoch(self, result: dict[str, Any]):

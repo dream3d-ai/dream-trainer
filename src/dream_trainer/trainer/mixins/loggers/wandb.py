@@ -96,7 +96,13 @@ class WandBLoggerMixin(LoggerMixin):
             k: v.float() if isinstance(v, Tensor) and v.dtype == torch.bfloat16 else v
             for k, v in logs.items()
         }
-        self._wandb.log({"trainer/global_step": self.global_step, **logs})
+        self._wandb.log(
+            {
+                "trainer/global_step": self.global_step,
+                "trainer/local_batches": self.local_batches,
+                **logs,
+            }
+        )
 
     @override
     @background
@@ -131,7 +137,13 @@ class WandBLoggerMixin(LoggerMixin):
             wandb.Image(image, caption=caption)
             for image, caption in zip(images, captions or [None] * len(images))
         ]
-        self._wandb.log({"trainer/global_step": self.global_step, desc: _images})
+        self._wandb.log(
+            {
+                "trainer/global_step": self.global_step,
+                "trainer/local_batches": self.local_batches,
+                desc: _images,
+            }
+        )
 
     @override
     @background
@@ -169,7 +181,13 @@ class WandBLoggerMixin(LoggerMixin):
             for video, caption in zip(videos, captions or [None] * len(videos))
         ]
 
-        self._wandb.log({"trainer/global_step": self.global_step, desc: _videos})
+        self._wandb.log(
+            {
+                "trainer/global_step": self.global_step,
+                "trainer/local_batches": self.local_batches,
+                desc: _videos,
+            }
+        )
 
     def _should_ignore(self, ignore_patterns: list[str]):
         def _ignore(path: str, root: str | None = None) -> bool:
@@ -184,7 +202,13 @@ class WandBLoggerMixin(LoggerMixin):
     @override
     @background
     def log_plot(self, plot: Any, desc: str):
-        self._wandb.log({"trainer/global_step": self.global_step, desc: plot})
+        self._wandb.log(
+            {
+                "trainer/global_step": self.global_step,
+                "trainer/local_batches": self.local_batches,
+                desc: plot,
+            }
+        )
 
     @override
     @background

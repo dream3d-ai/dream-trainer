@@ -43,12 +43,12 @@ class AsyncCheckpointCallback(CheckpointCallback):
         )
 
     @override
-    def _save(self, checkpoint: Checkpoint):
+    def _save(self, checkpoint: Checkpoint, state_dict: dict[str, Any]):
         self._wait_save()  # wait for previous save to finish
 
         logger.info(f"Saving checkpoint {checkpoint.checkpoint_id}")
         self._save_future = dcp.state_dict_saver.async_save(
-            self.trainer.state_dict(),
+            state_dict,
             checkpoint_id=str(self.root_dir / checkpoint.checkpoint_id),
             process_group=self.pg,
         )
@@ -57,7 +57,7 @@ class AsyncCheckpointCallback(CheckpointCallback):
                 f"Saved checkpoint to {self.root_dir / checkpoint.checkpoint_id}"
             )
         )
-        self._save_future.add_done_callback(self._cleanup_checkpoints)
+        self._save_future.add_done_callback(lambda _: self._cleanup_checkpoints())
 
     @override
     def _load(self, checkpoint: Checkpoint, state_dict: dict[str, Any]):
@@ -70,6 +70,9 @@ class AsyncCheckpointCallback(CheckpointCallback):
                     state_dict,
                     checkpoint_id=str(self.root_dir / checkpoint.checkpoint_id),
                     process_group=self.pg,
+                    planner=dcp.DefaultLoadPlanner(
+                        allow_partial_load=not self.config.strict_load
+                    ),
                 )
                 logger.info(f"Resumed {self.trainer.experiment} from step {checkpoint.step}")
                 future.set_result(None)

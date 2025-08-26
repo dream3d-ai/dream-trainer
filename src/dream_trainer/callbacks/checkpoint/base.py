@@ -102,14 +102,15 @@ class CheckpointCallback(Callback[DreamTrainer]):
             state_dict,
             checkpoint_id=str(self.root_dir / checkpoint.checkpoint_id),
             process_group=self.pg,
+            planner=dcp.DefaultLoadPlanner(allow_partial_load=not self.config.strict_load),
         )
         logger.info(f"Resumed {self.trainer.experiment} from step {checkpoint.step}")
         self.trainer.world.barrier()
 
-    def _save(self, checkpoint: Checkpoint):
+    def _save(self, checkpoint: Checkpoint, state_dict: dict[str, Any]):
         logger.info(f"Saving checkpoint {checkpoint.checkpoint_id}")
         dcp.state_dict_saver.save(
-            self.trainer.state_dict(),
+            state_dict,
             checkpoint_id=str(self.root_dir / checkpoint.checkpoint_id),
             process_group=self.pg,
         )
@@ -120,7 +121,12 @@ class CheckpointCallback(Callback[DreamTrainer]):
     @torch.no_grad()
     def load(self, checkpoint: Checkpoint):
         gc.collect(generation=1)
-        self._load(checkpoint, self.trainer.state_dict())
+
+        state_dict = self.trainer.state_dict(
+            ignore_frozen_params=self.config.ignore_frozen_params
+        )
+        self._load(checkpoint, state_dict)
+        self.trainer.load_state_dict(state_dict, strict=self.config.strict_load)
 
         self._did_resume = True
         self._current_metric = None
@@ -140,7 +146,13 @@ class CheckpointCallback(Callback[DreamTrainer]):
         )
 
         gc.collect(generation=1)
-        self._save(checkpoint)
+        self._save(
+            checkpoint,
+            self.trainer.state_dict(
+                ignore_frozen_params=self.config.ignore_frozen_params,
+                flatten_optimizer_state_dict=self.config.flatten_optimizer_state_dict,
+            ),
+        )
         gc.collect(generation=1)
 
     # ################

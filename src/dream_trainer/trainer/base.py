@@ -11,6 +11,14 @@ import torch
 import torch.nn as nn
 from dist_util.ops import apply_to_collection
 from torch.distributed._composable.replicate import DDP as DDPModule
+from torch.distributed.checkpoint.state_dict import (
+    StateDictOptions,
+    get_model_state_dict,
+    get_optimizer_state_dict,
+    set_model_state_dict,
+    set_optimizer_state_dict,
+)
+from torch.distributed.checkpoint.stateful import Stateful
 from torch.distributed.fsdp import FSDPModule
 from torch.optim.optimizer import Optimizer
 from typing_extensions import override
@@ -49,7 +57,7 @@ class BaseTrainerConfig(AbstractTrainerConfig):
     callbacks: "CallbackCollection" = cast("CallbackCollection", None)
 
 
-class BaseTrainer(AbstractTrainer):
+class BaseTrainer(AbstractTrainer, Stateful):
     """
     An implementation of a basic training loop, taking into account gradient accumulation,
     validation, callbacks, and contains bindings for backwards calls and optimizer steps.
@@ -94,7 +102,9 @@ class BaseTrainer(AbstractTrainer):
     # AbstractTrainer Methods #
     ###########################
 
-    def state_dict(self) -> dict[str, Any]:
+    def state_dict(
+        self, *, ignore_frozen_params: bool = False, flatten_optimizer_state_dict: bool = False
+    ) -> dict[str, Any]:
         """
         Return the complete state dictionary of the trainer.
 
@@ -109,6 +119,7 @@ class BaseTrainer(AbstractTrainer):
             dict[str, Any]: A dictionary containing the complete trainer state
                 that can be used to resume training from a checkpoint.
         """
+
         return {
             "trainer": {
                 "global_step": self.global_step,
@@ -116,12 +127,15 @@ class BaseTrainer(AbstractTrainer):
                 "callbacks": self.callbacks.state_dict(),
             },
             "models": {
-                name: model.state_dict()
+                name: get_model_state_dict(
+                    model,
+                    options=StateDictOptions(ignore_frozen_params=ignore_frozen_params),
+                )
                 for name, model in self.named_models().items()
                 if any(p.requires_grad for p in model.parameters())
             },
             "optimizers": {
-                name: optimizer.state_dict()
+                name: get_optimizer_state_dict(self.get_model_by_optimizer(name), optimizer)
                 for name, optimizer in self.named_optimizers().items()
             },
             "schedulers": {
@@ -134,7 +148,7 @@ class BaseTrainer(AbstractTrainer):
             },
         }
 
-    def load_state_dict(self, state_dict: dict[str, Any], strict: bool = True) -> None:
+    def load_state_dict(self, state_dict: dict[str, Any], *, strict: bool = True) -> None:
         """
         Load a complete state dictionary into the trainer.
 
@@ -153,35 +167,63 @@ class BaseTrainer(AbstractTrainer):
             ValueError: If strict=True and state_dict contains unexpected keys.
         """
         # Load Trainer State
-        trainer_state = state_dict.pop("trainer")
-        self.global_step = trainer_state.pop("global_step")
-        self.current_epoch = trainer_state.pop("current_epoch")
-        self.callbacks.load_state_dict(trainer_state.pop("callbacks"))
+        if trainer_state := state_dict.pop("trainer", {}):
+            self.global_step = trainer_state.pop("global_step")
+            self.current_epoch = trainer_state.pop("current_epoch")
+
+            if callbacks_state := trainer_state.pop("callbacks", {}):
+                self.callbacks.load_state_dict(callbacks_state)
 
         # Load Model State
+        models_state = state_dict.pop("models", {})
         for name, model in self.named_models().items():
-            model.load_state_dict(state_dict.pop("models")[name], strict=strict)
+            if name in models_state:
+                set_model_state_dict(model, models_state[name])
+                models_state.pop(name)
 
         # Load Optimizer State
+        optimizers_state = state_dict.pop("optimizers", {})
         for name, optimizer in self.named_optimizers().items():
-            optimizer.load_state_dict(state_dict.pop("optimizers")[name])
+            if name in optimizers_state:
+                set_optimizer_state_dict(
+                    self.get_model_by_optimizer(name), optimizer, optimizers_state[name]
+                )
+                optimizers_state.pop(name)
 
         # Load Scheduler State
+        schedulers_state = state_dict.pop("schedulers", {})
         for name, scheduler in (self.named_schedulers() or {}).items():
-            scheduler.load_state_dict(state_dict.pop("schedulers")[name])
+            if name in schedulers_state:
+                scheduler.load_state_dict(schedulers_state[name])
+                schedulers_state.pop(name)
 
         # Load Dataloader State
-        dataloader_state = state_dict.pop("dataloaders")
-        getattr(self.train_dataloader, "load_state_dict", lambda _: None)(
-            dataloader_state["train"]
-        )
-        getattr(self.val_dataloader, "load_state_dict", lambda _: None)(dataloader_state["val"])
+        dataloader_state = state_dict.pop("dataloaders", {})
+        if "train" in dataloader_state:
+            getattr(self.train_dataloader, "load_state_dict", lambda _: None)(
+                dataloader_state["train"]
+            )
+            dataloader_state.pop("train")
+        if "val" in dataloader_state:
+            getattr(self.val_dataloader, "load_state_dict", lambda _: None)(
+                dataloader_state["val"]
+            )
+            dataloader_state.pop("val")
 
-        if state_dict:
-            if strict:
-                raise ValueError(f"Missing keys in state_dict: {state_dict.keys()}")
-            else:
-                logger.warning(f"Missing keys in state_dict: {state_dict.keys()}")
+        leftover_keys: dict[str, Any] = {}
+        if models_state:
+            leftover_keys["models"] = models_state
+        if optimizers_state:
+            leftover_keys["optimizers"] = optimizers_state
+        if schedulers_state:
+            leftover_keys["schedulers"] = schedulers_state
+        if dataloader_state:
+            leftover_keys["dataloaders"] = dataloader_state
+        if trainer_state:
+            leftover_keys["trainer"] = trainer_state
+
+        if leftover_keys:
+            logger.warning(f"Keys in state_dict were not loaded: {leftover_keys}")
 
     @override
     def fit(self):
@@ -194,16 +236,13 @@ class BaseTrainer(AbstractTrainer):
         The method ensures proper cleanup by destroying the distributed process
         group in the finally block, even if training is interrupted.
         """
+
         try:
             self._fit()
         except Exception as e:
-            logger.error(f"Training failed: {e}")
-            raise
-        finally:
+            logger.error(f"Training interrupted due to an unhandled exception: {e}")
             self.callbacks.on_interrupt()
-
-            if torch.distributed.is_initialized():
-                torch.distributed.destroy_process_group()
+            raise
 
     ########################
     # User-Defined Methods #
@@ -283,7 +322,7 @@ class BaseTrainer(AbstractTrainer):
             if any(p.requires_grad for p in model.parameters()):
                 model.train()
 
-    def step(self, model: nn.Module, optimizer: Optimizer) -> torch.Tensor:
+    def step(self, optimizer: Optimizer, error_if_nonfinite: bool = True) -> torch.Tensor:
         """
         Performs a single optimization step for the given model and optimizer.
 
@@ -305,11 +344,14 @@ class BaseTrainer(AbstractTrainer):
         Returns:
             torch.Tensor: The total norm of the gradients before clipping.
         """
+        model = self.get_model_by_optimizer(self.get_name_by_optimizer(optimizer))
         parameters = [p for p in model.parameters() if p.grad is not None]
         if len(parameters) == 0:
             raise RuntimeError("Tried to step model with no gradients on any of its parameters")
 
-        total_norm = self.total_gradient_norm(parameters, p=2, foreach=True)
+        total_norm = self.total_gradient_norm(
+            parameters, p=2, error_if_nonfinite=error_if_nonfinite, foreach=True
+        )
         self.clip_gradient_norm(parameters, total_norm, foreach=True)
 
         self.callbacks.pre_optimizer_step(model, optimizer)
@@ -441,15 +483,24 @@ class BaseTrainer(AbstractTrainer):
         Returns:
             bool: True if accumulating gradients, False if applying them.
         """
-        # No longer accumulating gradients if and of the following is true:
+        # No longer accumulating gradients if any of the following is true:
         # - Completed num_gradient_accumulation_steps
         # - Is the last training batch in the epoch
         # - Is about to perform validation
 
-        return (
-            ((self.local_batches + 1) % self._num_gradient_accumulation_steps != 0)
-            and not self._is_last_training_batch
-            and not (int(self._num_train_batches * self.training_parameters.val_frequency))
+        completed_num_gradient_accumulation_steps = (
+            (self.local_batches + 1) % self._num_gradient_accumulation_steps
+        ) == 0
+
+        should_perform_validation = (
+            (self.global_step + 1)
+            % int(self._num_train_batches * self.training_parameters.val_frequency)
+        ) == 0
+
+        return not (
+            completed_num_gradient_accumulation_steps
+            or self._is_last_training_batch
+            or should_perform_validation
         )
 
     ######################
@@ -537,7 +588,11 @@ class BaseTrainer(AbstractTrainer):
             # Validation Epoch
             if (
                 (self.global_step + 1)
-                % int(self._num_train_batches * self.training_parameters.val_frequency)
+                % int(
+                    self._num_train_batches
+                    // self._num_gradient_accumulation_steps
+                    * self.training_parameters.val_frequency
+                )
             ) == 0:
                 self.perform_validation_epoch()
                 self.train()
@@ -602,8 +657,15 @@ class BaseTrainer(AbstractTrainer):
                 f"Expected {self._num_val_steps} batches, received {batch_idx + 1}"
             )
 
+        # Reshard model after validation
+        for _, model in self.named_models().items():
+            for module in model.modules():
+                if isinstance(module, FSDPModule):
+                    module.reshard()
+
         # Validation Epoch End
         self.callbacks.post_validation_epoch(result)
+        self.world.barrier()
 
     def perform_sanity_validation_steps(self):
         """

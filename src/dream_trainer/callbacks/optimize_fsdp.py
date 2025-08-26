@@ -248,6 +248,21 @@ class OptimizeFSDP(Callback[DreamTrainer]):
                 model.unshard(async_op=True)
 
     @override
+    def pre_validation_step(self, *_):
+        """Unshard FSDP models asynchronously before validation step.
+
+        This method is called before each validation step. It triggers asynchronous unsharding of
+        the first all-gather of all FSDP model, allowing the unsharding operation to overlap
+        with other computations and reducing the time spent waiting for data movement.
+
+        Args:
+            *_: Unused arguments from the trainer callback interface.
+        """
+        for _, model in self.trainer.named_models().items():
+            if isinstance(model, FSDPModule):
+                model.unshard(async_op=True)
+
+    @override
     def post_train_step(self, _, batch_idx: int):
         """Set up prefetching based on traced execution order and clean up hooks.
 

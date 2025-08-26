@@ -16,6 +16,8 @@ class CheckpointParameters:
 
     keep_top_k: int = 5
     strict_load: bool = False
+    ignore_frozen_params: bool = False
+    flatten_optimizer_state_dict: bool = True
 
     model_weights_only: bool = True
     exclude_from_loading: list[str] = field(default_factory=list)

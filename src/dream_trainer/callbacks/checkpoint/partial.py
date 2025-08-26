@@ -40,7 +40,7 @@ class LoadPartialCheckpointCallback(Callback[DreamTrainer]):
         logger.info(f"Loading weights from {checkpoint.checkpoint_id}")
 
         # Only load necessary states
-        state_dict = self.trainer.state_dict()
+        state_dict = self.trainer.state_dict(flatten_optimizer_state_dict=True)
 
         state_dict.pop("trainer")
         state_dict.pop("optimizers")
@@ -56,7 +56,9 @@ class LoadPartialCheckpointCallback(Callback[DreamTrainer]):
             state_dict,
             checkpoint_id=str(self.path / checkpoint.checkpoint_id),
             process_group=self.pg,
+            planner=dcp.DefaultLoadPlanner(allow_partial_load=True),
         )
+        self.trainer.load_state_dict(state_dict, strict=False)
 
         self.trainer.world.barrier()
         del self.pg

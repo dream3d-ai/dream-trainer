@@ -110,6 +110,36 @@ class AbstractTrainer(ABC):
         ...
 
     @abstractmethod
+    def get_model_by_optimizer(self, name: str) -> "nn.Module":
+        """
+        Return the model associated with a given optimizer name.
+
+        This method should return the model associated with a given optimizer name.
+
+        Returns:
+            nn.Module: The model associated with the optimizer.
+
+        Raises:
+            ValueError: If the optimizer is not found in named_optimizers().
+        """
+        ...
+
+    @abstractmethod
+    def get_optimizers_by_model(self, name: str) -> list["Optimizer"]:
+        """
+        Return the model associated with a given optimizer name.
+
+        This method should return the model associated with a given optimizer name.
+
+        Returns:
+            nn.Module: The model associated with the optimizer.
+
+        Raises:
+            ValueError: If the optimizer is not found in named_optimizers().
+        """
+        ...
+
+    @abstractmethod
     def named_schedulers(self) -> dict[str, "LRScheduler"] | None:
         """
         Return a dictionary mapping scheduler names to their corresponding schedulers.

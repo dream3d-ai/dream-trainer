@@ -40,7 +40,7 @@ def format_batch(batch: Tensor | list[torch.Tensor], spacing: int = 2) -> torch.
     match batch:
         case Tensor():
             validate_shape(batch.shape)
-            return batch
+            return batch.to(device="cpu", non_blocking=True)
         case list() | tuple() if all(isinstance(b, torch.Tensor) for b in batch):
             assert all(validate_shape(b.shape) for b in batch)
             assert all(b.shape == batch[0].shape for b in batch), (
@@ -53,7 +53,7 @@ def format_batch(batch: Tensor | list[torch.Tensor], spacing: int = 2) -> torch.
 
             # Interleave samples and batches
             batch = torch.cat([sample for sample in chain(*zip(batch, repeat(space)))], dim=-1)
-            return batch[..., :-spacing]
+            return batch[..., :-spacing].to(device="cpu", non_blocking=True)
         case _:
             raise TypeError(
                 f"Unsupported sample type: {type(batch)}. Please provide either a single sample or tuple of samples"
@@ -85,13 +85,18 @@ class MediaLoggerCallback(RankZeroCallback[LoggerMixin]):
         self.image_key = image_key
         self.caption_key = caption_key
 
+        self._logged_this_epoch = False
+
     @override
     def pre_validation_epoch(self):
         self._samples: list[tuple[Tensor, str]] = []
+        self._logged_this_epoch = False
 
     @override
     def post_validation_step(self, result: dict[str, Any], batch_idx: int):
         if len(self._samples) >= self.num_samples:
+            if not self._logged_this_epoch:
+                self.log_samples()
             return
 
         if self.image_key not in result:
@@ -112,8 +117,7 @@ class MediaLoggerCallback(RankZeroCallback[LoggerMixin]):
         batch = list(zip(format_batch(samples, self.spacing), captions))
         self._samples.extend(batch[: self.num_samples - len(self._samples)])
 
-    @override
-    def post_validation_epoch(self, *_):
+    def log_samples(self):
         image_samples = [sample for sample in self._samples if sample[0].ndim == 3]
         video_samples = [sample for sample in self._samples if sample[0].ndim == 4]
 
@@ -125,3 +129,10 @@ class MediaLoggerCallback(RankZeroCallback[LoggerMixin]):
         if video_samples:
             videos, video_captions = zip(*video_samples)
             self.trainer.log_videos(videos, video_captions)
+
+        self._logged_this_epoch = True
+
+    @override
+    def post_validation_epoch(self, *_):
+        if not self._logged_this_epoch:
+            self.log_samples()

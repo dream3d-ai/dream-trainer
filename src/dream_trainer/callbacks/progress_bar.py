@@ -149,7 +149,12 @@ class ProgressBar(Callback[BaseTrainer]):
     def post_train_step(self, result: dict[str, Any], batch_idx: int):
         if self.metric is not None:
             if self.metric in result:
-                self.training_tqdm.set_postfix({self.metric: f"{result[self.metric]:.3f}"})
+                if isinstance(result[self.metric], float):
+                    postfix = f"{result[self.metric]:.3f}"
+                else:
+                    postfix = str(result[self.metric])
+
+                self.training_tqdm.set_postfix({self.metric: postfix})
             else:
                 self.training_tqdm.set_postfix({})
 
@@ -191,6 +196,7 @@ class ProgressBar(Callback[BaseTrainer]):
     @override
     def post_validation_epoch(self, *_):
         self.validation_tqdm.refresh()
+        self.training_tqdm.refresh()
 
     def _update_ema(self, current: float, update: float) -> float:
         return (1 - self.smoothing) * update + self.smoothing * current

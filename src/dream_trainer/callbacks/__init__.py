@@ -18,7 +18,7 @@ except ImportError:
     pass
 
 try:
-    from .fp8 import Fp8Quantization
+    from .fp8 import Fp8Quantization, Fp8QuantizeConfig
 except ImportError:
     pass
 
@@ -51,6 +51,7 @@ __all__ = [
     "FaultToleranceCallback",
     "FindGraphBreaksCallback",
     "Fp8Quantization",
+    "Fp8QuantizeConfig",
     "GarbageCollectionCallback",
     "LoadPartialCheckpointCallback",
     "LRLoggerCallback",
