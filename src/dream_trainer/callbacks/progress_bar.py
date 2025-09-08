@@ -2,6 +2,7 @@ import sys
 import time
 from typing import Any, MutableMapping
 
+import torch
 from tqdm import tqdm
 from typing_extensions import override
 
@@ -151,6 +152,8 @@ class ProgressBar(Callback[BaseTrainer]):
             if self.metric in result:
                 if isinstance(result[self.metric], float):
                     postfix = f"{result[self.metric]:.3f}"
+                elif isinstance(result[self.metric], torch.Tensor):
+                    postfix = f"{result[self.metric].item():.3f}"
                 else:
                     postfix = str(result[self.metric])
 

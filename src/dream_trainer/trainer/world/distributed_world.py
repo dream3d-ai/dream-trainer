@@ -253,6 +253,9 @@ class DistributedWorld:
 
         logger.info("Launched Distributed World")
 
+    def destroy(self):
+        dist.destroy_process_group()
+
     def set_determinism(
         self,
         seed: int | None = None,
@@ -410,14 +413,14 @@ class DistributedWorld:
         Returns a context manager for training that sets up optional distributed context features.
 
         This context manager enables:
-            - Compiled autograd if configured (`self.config.enable_compiled_autograd`)
+            - Compiled autograd if configured (`self.config.compiled_autograd`)
 
         Returns:
             contextlib._GeneratorContextManager: A context manager that sets up the training context.
         """
 
         contexts = []
-        if self.config.enable_compiled_autograd:
+        if self.config.compiled_autograd:
             contexts.append(torch._dynamo.utils.maybe_enable_compiled_autograd(True))
 
         with stacked_context(contexts):

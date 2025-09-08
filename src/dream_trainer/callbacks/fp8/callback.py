@@ -61,7 +61,8 @@ class Fp8Quantization(Callback[QuantizeMixin]):
             module_name in self.trainer.named_models().keys()
             for module_name in self.model_to_recipe.keys()
         ), (
-            f"Not all modules in {self.model_to_recipe} exist in {self.trainer.named_models().keys()}. Missing: {set(self.model_to_recipe.keys()) - set(self.trainer.named_models().keys())}"
+            f"Not all modules in {self.model_to_recipe} exist in {self.trainer.named_models().keys()}. "
+            f"Missing: {set(self.model_to_recipe.keys()) - set(self.trainer.named_models().keys())}"
         )
 
         for module_name, config in self.model_to_recipe.items():

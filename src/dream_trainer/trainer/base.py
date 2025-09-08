@@ -242,6 +242,7 @@ class BaseTrainer(AbstractTrainer, Stateful):
         except Exception as e:
             logger.error(f"Training interrupted due to an unhandled exception: {e}")
             self.callbacks.on_interrupt()
+            self.world.destroy()
             raise
 
     ########################

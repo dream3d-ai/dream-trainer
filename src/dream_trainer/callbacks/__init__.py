@@ -42,6 +42,11 @@ try:
 except ImportError:
     pass
 
+try:
+    from .model_summary import ModelSummary
+except ImportError:
+    pass
+
 __all__ = [
     "AsyncCheckpointCallback",
     "Callback",
@@ -63,6 +68,7 @@ __all__ = [
     "ProfileCallback",
     "ProgressBar",
     "RankZeroCallback",
+    "ModelSummary",
     "TrainerSummary",
     "WeightTransferCallback",
 ]

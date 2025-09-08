@@ -20,6 +20,9 @@ class LoggerMixin(AbstractTrainer):
 
         self.logging_parameters = config.logging_parameters
 
+    def finish(self, exit_code: int = 0):
+        raise NotImplementedError("Please implement `finish`")
+
     def log_config(self, config: dict[str, Any] | Any):
         raise NotImplementedError("Please implement `log_config`")
 

@@ -70,7 +70,7 @@ class AsyncCheckpointCallback(CheckpointCallback):
                     state_dict,
                     checkpoint_id=str(self.root_dir / checkpoint.checkpoint_id),
                     process_group=self.pg,
-                    planner=dcp.DefaultLoadPlanner(
+                    planner=dcp.default_planner.DefaultLoadPlanner(
                         allow_partial_load=not self.config.strict_load
                     ),
                 )

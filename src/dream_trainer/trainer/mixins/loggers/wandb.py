@@ -78,6 +78,9 @@ class WandBLoggerMixin(LoggerMixin):
         except ImportError:
             pass
 
+    def finish(self, exit_code: int = 0):
+        self._wandb.finish(exit_code=exit_code)
+
     def log_model(
         self,
         models: list[nn.Module] | None = None,
@@ -100,6 +103,7 @@ class WandBLoggerMixin(LoggerMixin):
             {
                 "trainer/global_step": self.global_step,
                 "trainer/local_batches": self.local_batches,
+                "trainer/epoch": self.current_epoch,
                 **logs,
             }
         )
@@ -141,6 +145,7 @@ class WandBLoggerMixin(LoggerMixin):
             {
                 "trainer/global_step": self.global_step,
                 "trainer/local_batches": self.local_batches,
+                "trainer/epoch": self.current_epoch,
                 desc: _images,
             }
         )
@@ -185,6 +190,7 @@ class WandBLoggerMixin(LoggerMixin):
             {
                 "trainer/global_step": self.global_step,
                 "trainer/local_batches": self.local_batches,
+                "trainer/epoch": self.current_epoch,
                 desc: _videos,
             }
         )
@@ -206,6 +212,7 @@ class WandBLoggerMixin(LoggerMixin):
             {
                 "trainer/global_step": self.global_step,
                 "trainer/local_batches": self.local_batches,
+                "trainer/epoch": self.current_epoch,
                 desc: plot,
             }
         )

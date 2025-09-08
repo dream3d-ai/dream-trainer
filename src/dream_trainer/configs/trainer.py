@@ -44,7 +44,7 @@ class DeviceParameters:
 
     ## Model Compilation
     checkpoint_activations: bool = False
-    enable_compiled_autograd: bool = False
+    compiled_autograd: bool = False
     compile_model: bool = True
     async_tensor_parallel: bool = True
     loss_parallel: bool = False
@@ -119,7 +119,7 @@ class DeviceParameters:
         compile_model: bool = True,
         cpu_offload: bool = False,
         checkpoint_activations: bool = False,
-        enable_compiled_autograd: bool = False,
+        compiled_autograd: bool = False,
     ) -> "DeviceParameters":
         """
         Hybrid Sharding Parallelism
@@ -140,7 +140,7 @@ class DeviceParameters:
             _dp_shard=dp_shard,
             _context_parallel=1,
             _pipeline_parallel=1,
-            enable_compiled_autograd=enable_compiled_autograd,
+            compiled_autograd=compiled_autograd,
         )
 
     @classmethod
@@ -151,7 +151,7 @@ class DeviceParameters:
         compile_model: bool = True,
         cpu_offload: bool = False,
         checkpoint_activations: bool = False,
-        enable_compiled_autograd: bool = False,
+        compiled_autograd: bool = False,
     ) -> "DeviceParameters":
         """
         TP within nodes
@@ -190,7 +190,7 @@ class DeviceParameters:
             _dp_replicate=1,
             _context_parallel=1,
             _pipeline_parallel=1,
-            enable_compiled_autograd=enable_compiled_autograd,
+            compiled_autograd=compiled_autograd,
         )
 
     @classmethod
@@ -199,7 +199,7 @@ class DeviceParameters:
         cpu_offload: bool = False,
         checkpoint_activations: bool = False,
         compile_model: bool = True,
-        enable_compiled_autograd: bool = False,
+        compiled_autograd: bool = False,
     ) -> "DeviceParameters":
         return cls(
             cpu_offload=cpu_offload,
@@ -210,7 +210,7 @@ class DeviceParameters:
             _tensor_parallel=1,
             _context_parallel=1,
             _pipeline_parallel=1,
-            enable_compiled_autograd=enable_compiled_autograd,
+            compiled_autograd=compiled_autograd,
         )
 
     @classmethod

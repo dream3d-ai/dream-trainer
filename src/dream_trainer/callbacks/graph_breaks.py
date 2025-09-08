@@ -50,6 +50,17 @@ def explain_wrapper(func: Callable):
     return wrapper
 
 
+def get_name(module):
+    if isinstance(module, nn.Module):
+        return module.__class__.__name__
+
+    if hasattr(module, "__self__"):
+        # Handles Module.compile() calls where the captured forward function is compiled
+        return f"{module.__self__.__class__.__name__}.{module.__name__}"
+
+    return module.__name__
+
+
 def please_find_graph_breaks(
     trainer: BaseTrainer,
     batch: dict[str, Any],
@@ -57,52 +68,39 @@ def please_find_graph_breaks(
     path: str = "graph_breaks.log",
     fullgraph: bool = False,
 ):
-    def _get_compiled(trainer):
-        compiled = []
+    def _get_compiled(trainer) -> dict[str, nn.Module]:
+        compiled = {}
 
         def _compile(module, *args, **kwargs):
-            compiled.append(module)
+            compiled[get_name(module)] = module
             return module
 
         torch.compile = _compile
         trainer.apply_compile()
         return compiled
 
-    def _reset_compiled(trainer, compiled):
-        count = -1
-
-        def _compile(*args, **kwargs):
-            nonlocal count
-            count += 1
-            return compiled[count]
+    def _reset_compiled(trainer, name, module):
+        def _compile(module_, *args, **kwargs):
+            return module if get_name(module_) == name else module_
 
         torch.compile = _compile
         trainer.apply_compile()
-        assert count == len(compiled) - 1, "Not all compiled modules were provided"
 
-    def _compile_nth(trainer, n):
-        count = -1
-        name = ""
+    def _compile_specific(trainer, name):
+        def _compile(module, *args, **kwargs):
+            name = get_name(module)
 
-        def _compile(func, *args, **kwargs):
-            nonlocal count, name
-            count += 1
-            if count == n:
-                if fullgraph:
-                    kwargs.pop("fullgraph", None)
-                    return original_compile(func, *args, **kwargs, fullgraph=True)
+            if name != name:
+                return module
 
-                if isinstance(func, nn.Module):
-                    name = func.__class__.__name__
-                    return ExplainWrapper(func)
+            if fullgraph:
+                kwargs.pop("fullgraph", None)
+                return original_compile(module, *args, **kwargs, fullgraph=True)
 
-                if hasattr(func, "__self__"):
-                    # Handles Module.compile() calls where the captured forward function is compiled
-                    name = f"{func.__self__.__class__.__name__}.{func.__name__}"
-                else:
-                    name = func.__name__
-                return explain_wrapper(func)
-            return func
+            if isinstance(module, nn.Module):
+                return ExplainWrapper(module)
+
+            return explain_wrapper(module)
 
         torch.compile = _compile
         trainer.apply_compile()
@@ -112,21 +110,23 @@ def please_find_graph_breaks(
     compiled = _get_compiled(trainer)
     explanations = []
 
-    for i in tqdm(range(len(compiled)), desc="Finding graph breaks"):
-        name = _compile_nth(trainer, i)
+    with tqdm(compiled.items(), desc="Finding graph breaks") as pbar:
+        for name, module in pbar:
+            pbar.set_description(f"Finding graph breaks in {name}")
 
-        try:
-            with trainer.train_context():
-                trainer.training_step(batch, batch_idx)
-        except DynamoExplain as exception:
-            # Present only the most important information
-            explain = exception.explain
-            explain.ops_per_graph = None
-            explain.out_guards = None
-            explanations.append((name, explain))
-        finally:
-            _reset_compiled(trainer, compiled)
+            _compile_specific(trainer, name)
 
+            try:
+                with trainer.train_context():
+                    trainer.training_step(batch, batch_idx)
+            except DynamoExplain as exception:
+                # Present only the most important information
+                explain = exception.explain
+                explain.ops_per_graph = None
+                explain.out_guards = None
+                explanations.append((name, explain))
+            finally:
+                _reset_compiled(trainer, name, module)
     if fullgraph:
         logger.success("Successfully compiled with fullgraph")
         return

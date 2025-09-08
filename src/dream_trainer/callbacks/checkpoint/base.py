@@ -85,7 +85,7 @@ class CheckpointCallback(Callback[DreamTrainer]):
             )
 
         if not isinstance(metric, Tensor):
-            metric = torch.tensor(metric)
+            metric = torch.tensor(metric, dtype=torch.float32)
 
         if metric.numel() != 1:
             raise ValueError(f"Metric must be a scalar tensor, got {metric.shape}")
@@ -102,7 +102,9 @@ class CheckpointCallback(Callback[DreamTrainer]):
             state_dict,
             checkpoint_id=str(self.root_dir / checkpoint.checkpoint_id),
             process_group=self.pg,
-            planner=dcp.DefaultLoadPlanner(allow_partial_load=not self.config.strict_load),
+            planner=dcp.default_planner.DefaultLoadPlanner(
+                allow_partial_load=not self.config.strict_load
+            ),
         )
         logger.info(f"Resumed {self.trainer.experiment} from step {checkpoint.step}")
         self.trainer.world.barrier()

@@ -90,3 +90,11 @@ class LoggerCallback(RankZeroCallback[LoggerMixin]):
     @override
     def post_validation_epoch(self, result: dict[str, Any]):
         self.trainer.log_dict(filter_logs(result))
+
+    @override
+    def post_fit(self):
+        self.trainer.finish()
+
+    @override
+    def on_interrupt(self):
+        return self.trainer.finish(exit_code=1)
