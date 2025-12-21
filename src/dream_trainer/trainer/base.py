@@ -6,10 +6,8 @@ from dataclasses import dataclass
 from itertools import repeat
 from typing import TYPE_CHECKING, Any, Iterable, cast
 
-import dist_util.ops as dist_ops
 import torch
 import torch.nn as nn
-from dist_util.ops import apply_to_collection
 from torch.distributed._composable.replicate import DDP as DDPModule
 from torch.distributed.checkpoint.state_dict import (
     get_optimizer_state_dict,
@@ -21,6 +19,7 @@ from torch.distributed.fsdp import FSDPModule
 from torch.optim.optimizer import Optimizer
 from typing_extensions import override
 
+import dream_trainer.utils.dist.ops as dist_ops
 from dream_trainer.configs.trainer import TrainingParameters
 from dream_trainer.utils import logger
 from dream_trainer.utils.common import seed_everything, stacked_context
@@ -29,6 +28,7 @@ from dream_trainer.utils.dataloader import (
     get_train_dataloader_steps,
     get_val_dataloader_steps,
 )
+from dream_trainer.utils.dist.ops import apply_to_collection
 
 from .abstract import AbstractTrainerConfig
 from .mixins.eval_metric import EvalMetricMixin
@@ -434,9 +434,9 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         # Keep track of previous state (only update on transition)
         self._was_accumulating_gradients = getattr(self, "_was_accumulating_gradients", False)
 
-        assert all(isinstance(model, (FSDPModule, DDPModule)) for model in models), (
-            f"Expected all modules to be FSDPModule or DDPModule, got {[type(model).__name__ for model in models]}"
-        )
+        assert all(
+            isinstance(model, (FSDPModule, DDPModule)) for model in models
+        ), f"Expected all modules to be FSDPModule or DDPModule, got {[type(model).__name__ for model in models]}"
         distributed_modules = cast(tuple[FSDPModule | DDPModule, ...], models)
 
         if self._was_accumulating_gradients != self.is_accumulating_gradients:
@@ -762,23 +762,23 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         )
 
         # Check global agreement for training parameters
-        assert dist_ops.global_agreement(self._train_batch_size), (
-            "`train_batch_size` must be the same across all ranks"
-        )
-        assert dist_ops.global_agreement(self._num_train_batches), (
-            "`num_train_steps` must be the same across all ranks"
-        )
-        assert dist_ops.global_agreement(self._num_gradient_accumulation_steps), (
-            "`num_gradient_accumulation_steps` must be the same across all ranks"
-        )
+        assert dist_ops.global_agreement(
+            self._train_batch_size
+        ), "`train_batch_size` must be the same across all ranks"
+        assert dist_ops.global_agreement(
+            self._num_train_batches
+        ), "`num_train_steps` must be the same across all ranks"
+        assert dist_ops.global_agreement(
+            self._num_gradient_accumulation_steps
+        ), "`num_gradient_accumulation_steps` must be the same across all ranks"
 
         # Check global agreement for validation parameters
-        assert dist_ops.global_agreement(self._num_val_steps), (
-            "`num_val_steps` must be the same across all ranks"
-        )
-        assert dist_ops.global_agreement(self._num_sanity_val_steps), (
-            "`num_sanity_val_steps` must be the same across all ranks"
-        )
+        assert dist_ops.global_agreement(
+            self._num_val_steps
+        ), "`num_val_steps` must be the same across all ranks"
+        assert dist_ops.global_agreement(
+            self._num_sanity_val_steps
+        ), "`num_sanity_val_steps` must be the same across all ranks"
 
     def _fit(self):
         """

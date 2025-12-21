@@ -4,7 +4,6 @@ import math
 import os
 from typing import Callable, Iterable, cast
 
-import dist_util
 import torch
 import torch._inductor.config
 import torch.distributed
@@ -18,6 +17,7 @@ from torch.distributed.distributed_c10d import ProcessGroup, ReduceOp
 from torch.distributed.fsdp import CPUOffloadPolicy, MixedPrecisionPolicy
 from torch.distributed.tensor import DTensor
 
+import dream_trainer.utils.dist as dist_util
 from dream_trainer.configs import DeviceParameters
 from dream_trainer.utils import logger
 from dream_trainer.utils.common import get_device_info, stacked_context

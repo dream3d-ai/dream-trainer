@@ -2,10 +2,10 @@ from dataclasses import dataclass, field
 from math import prod
 from typing import Literal
 
-import dist_util
 import torch
 import torch.distributed.tensor.parallel
 
+import dream_trainer.utils.dist as dist_util
 from dream_trainer.utils import logger
 
 
@@ -126,9 +126,9 @@ class DeviceParameters:
         """
 
         if tensor_parallel == "auto":
-            assert isinstance(dp_shard, int), (
-                "dp_shard must be an integer if tensor_parallel is auto"
-            )
+            assert isinstance(
+                dp_shard, int
+            ), "dp_shard must be an integer if tensor_parallel is auto"
             tensor_parallel = dist_util.core.get_dist_local_world_size()
 
         return cls(
@@ -254,14 +254,14 @@ class DeviceParameters:
         world_size = dist_util.core.get_dist_world_size()
         if len(auto_dims) == 1:
             remainder = prod(int(d) for d in parallelism_dimensions.values() if d != "auto")
-            assert world_size % remainder == 0, (
-                f"World size, {world_size} must be divisible by the product of the non-auto dimensions {remainder}. Got {self}"
-            )
+            assert (
+                world_size % remainder == 0
+            ), f"World size, {world_size} must be divisible by the product of the non-auto dimensions {remainder}. Got {self}"
             setattr(self, auto_dims[0], world_size // remainder)
         else:
-            assert prod(map(int, parallelism_dimensions.values())) == world_size, (
-                f"The product of the parallelism dimensions must equal the world size, {world_size}. Got {self}"
-            )
+            assert (
+                prod(map(int, parallelism_dimensions.values())) == world_size
+            ), f"The product of the parallelism dimensions must equal the world size, {world_size}. Got {self}"
 
         if self.async_tensor_parallel and not self.compile_model:
             raise ValueError("Async tensor parallelism requires model compilation")
