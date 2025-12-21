@@ -17,7 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 wandb = [
-    "wandb[media]>=0.19.11",
+    "wandb[media]>=0.22.3",
 ]
 rich = [
     "rich>=14.0.0",
@@ -26,7 +26,7 @@ metrics = [
     "torchmetrics>=1.7.1",
 ]
 torchao = [
-    "torchao>=0.12.0",
+    "torchao",
 ]
 torchft = [
     "torchft",
@@ -56,3 +56,7 @@ lint.ignore = ["F722", "E731", "F821", "E741"]
 [tool.uv.sources]
 torchft = { git = "https://github.com/pytorch/torchft.git" }
 dist-util = { workspace = true }
+
+
+[tool.uv.extra-build-dependencies]
+torchft = ["maturin"]

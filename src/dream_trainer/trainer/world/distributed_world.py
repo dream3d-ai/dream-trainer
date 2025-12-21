@@ -46,16 +46,15 @@ def construct_mesh(
         "tp",
     ]
     names_and_dims = list(zip(names, dims))
-    names_and_dims = [(name, dim) for name, dim in names_and_dims if dim > 1]
-
-    # If running single device as FSDP (or DDP), we add dummy dimensions
-    if len(names_and_dims) == 0:
-        if config.run_single_device_as_fsdp:
-            names_and_dims = [("dp_shard", 1)]
-            logger.info("Running single device as FSDP")
-        elif config.run_single_device_as_ddp:
-            names_and_dims = [("dp_replicate", 1)]
-            logger.info("Running single device as DDP")
+    names_and_dims = [
+        (name, dim)
+        for name, dim in names_and_dims
+        if (
+            dim > 1
+            or (name == "dp_shard" and config.force_fsdp)
+            or (name == "dp_replicate" and config.force_ddp)
+        )
+    ]
 
     filtered_names = [name for name, _ in names_and_dims]
     filtered_dims = [dim for _, dim in names_and_dims]
@@ -504,7 +503,6 @@ class DistributedWorld:
         self,
         parameters: torch.Tensor | Iterable[torch.Tensor],
         norm_type: float = 2.0,
-        error_if_nonfinite: bool = False,
         foreach: bool | None = None,
         async_op: bool = False,
     ) -> torch.Tensor:
@@ -520,9 +518,6 @@ class DistributedWorld:
             max_norm (float): max norm of the gradients
             norm_type (float): type of the used p-norm. Can be ``'inf'`` for
                 infinity norm.
-            error_if_nonfinite (bool): if True, an error is thrown if the total
-                norm of the gradients from :attr:`parameters` is ``nan``,
-                ``inf``, or ``-inf``. Default: False (will switch to True in the future)
             foreach (bool): use the faster foreach-based implementation.
                 If ``None``, use the foreach implementation for CUDA and CPU native tensors and silently
                 fall back to the slow implementation for other device types.
@@ -534,7 +529,7 @@ class DistributedWorld:
         """
         grads = [p.grad for p in parameters if p.grad is not None]
         total_norm = torch.nn.utils.get_total_norm(
-            grads, norm_type, error_if_nonfinite, foreach
+            grads, norm_type, self.config.error_if_nonfinite, foreach
         )
 
         # If total_norm is a DTensor, the placements must be `torch.distributed._tensor.ops.math_ops._NormPartial`.

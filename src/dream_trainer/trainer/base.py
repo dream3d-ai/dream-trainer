@@ -12,8 +12,6 @@ import torch.nn as nn
 from dist_util.ops import apply_to_collection
 from torch.distributed._composable.replicate import DDP as DDPModule
 from torch.distributed.checkpoint.state_dict import (
-    StateDictOptions,
-    get_model_state_dict,
     get_optimizer_state_dict,
     set_model_state_dict,
     set_optimizer_state_dict,
@@ -32,7 +30,8 @@ from dream_trainer.utils.dataloader import (
     get_val_dataloader_steps,
 )
 
-from .abstract import AbstractTrainer, AbstractTrainerConfig
+from .abstract import AbstractTrainerConfig
+from .mixins.eval_metric import EvalMetricMixin
 
 if TYPE_CHECKING:
     from dream_trainer.callbacks import CallbackCollection
@@ -57,7 +56,7 @@ class BaseTrainerConfig(AbstractTrainerConfig):
     callbacks: "CallbackCollection" = cast("CallbackCollection", None)
 
 
-class BaseTrainer(AbstractTrainer, Stateful):
+class BaseTrainer(EvalMetricMixin, Stateful):
     """
     An implementation of a basic training loop, taking into account gradient accumulation,
     validation, callbacks, and contains bindings for backwards calls and optimizer steps.
@@ -102,9 +101,7 @@ class BaseTrainer(AbstractTrainer, Stateful):
     # AbstractTrainer Methods #
     ###########################
 
-    def state_dict(
-        self, *, ignore_frozen_params: bool = False, flatten_optimizer_state_dict: bool = False
-    ) -> dict[str, Any]:
+    def state_dict(self) -> dict[str, Any]:
         """
         Return the complete state dictionary of the trainer.
 
@@ -124,16 +121,10 @@ class BaseTrainer(AbstractTrainer, Stateful):
             "trainer": {
                 "global_step": self.global_step,
                 "current_epoch": self.current_epoch,
+                "local_batches": self.local_batches,
                 "callbacks": self.callbacks.state_dict(),
             },
-            "models": {
-                name: get_model_state_dict(
-                    model,
-                    options=StateDictOptions(ignore_frozen_params=ignore_frozen_params),
-                )
-                for name, model in self.named_models().items()
-                if any(p.requires_grad for p in model.parameters())
-            },
+            "models": self.model_state_dict(),
             "optimizers": {
                 name: get_optimizer_state_dict(self.get_model_by_optimizer(name), optimizer)
                 for name, optimizer in self.named_optimizers().items()
@@ -170,6 +161,7 @@ class BaseTrainer(AbstractTrainer, Stateful):
         if trainer_state := state_dict.pop("trainer", {}):
             self.global_step = trainer_state.pop("global_step")
             self.current_epoch = trainer_state.pop("current_epoch")
+            self.local_batches = trainer_state.pop("local_batches")
 
             if callbacks_state := trainer_state.pop("callbacks", {}):
                 self.callbacks.load_state_dict(callbacks_state)
@@ -242,12 +234,26 @@ class BaseTrainer(AbstractTrainer, Stateful):
         except Exception as e:
             logger.error(f"Training interrupted due to an unhandled exception: {e}")
             self.callbacks.on_interrupt()
-            self.world.destroy()
             raise
 
     ########################
     # User-Defined Methods #
     ########################
+
+    def pre_train_step(self, batch: dict[str, Any], batch_idx: int) -> dict[str, Any]:
+        """
+        Called at the start of each training step.
+        """
+        return batch
+
+    @abstractmethod
+    def model_state_dict(
+        self, *, ignore_frozen_params: bool = False, flatten_optimizer_state_dict: bool = False
+    ) -> dict[str, Any]:
+        """
+        Return the state dict of the models for checkpointing. Make sure to use DCP's get_model_state_dict.
+        """
+        pass
 
     @abstractmethod
     def training_step(self, batch: dict[str, Any], batch_idx: int) -> dict[str, Any]:
@@ -265,6 +271,12 @@ class BaseTrainer(AbstractTrainer, Stateful):
         Returns:
             dict[str, Any]: Dictionary containing at minimum the computed loss
                 and any other metrics or values to log.
+        """
+        pass
+
+    def pre_validation_step(self, batch: dict[str, Any], batch_idx: int):
+        """
+        Called at the start of each validation step.
         """
         pass
 
@@ -323,7 +335,7 @@ class BaseTrainer(AbstractTrainer, Stateful):
             if any(p.requires_grad for p in model.parameters()):
                 model.train()
 
-    def step(self, optimizer: Optimizer, error_if_nonfinite: bool = True) -> torch.Tensor:
+    def step(self, optimizer: Optimizer) -> torch.Tensor:
         """
         Performs a single optimization step for the given model and optimizer.
 
@@ -350,9 +362,7 @@ class BaseTrainer(AbstractTrainer, Stateful):
         if len(parameters) == 0:
             raise RuntimeError("Tried to step model with no gradients on any of its parameters")
 
-        total_norm = self.total_gradient_norm(
-            parameters, p=2, error_if_nonfinite=error_if_nonfinite, foreach=True
-        )
+        total_norm = self.total_gradient_norm(parameters, p=2, foreach=True)
         self.clip_gradient_norm(parameters, total_norm, foreach=True)
 
         self.callbacks.pre_optimizer_step(model, optimizer)
@@ -416,7 +426,7 @@ class BaseTrainer(AbstractTrainer, Stateful):
                 loss.backward()
         """
 
-        if self.world.world_size == 1 or self._num_gradient_accumulation_steps == 1:
+        if self.world.dp_size == 1 or self._num_gradient_accumulation_steps == 1:
             # If no gradient accumulation or in single process environment, don't sync gradients
             yield
             return
@@ -444,15 +454,9 @@ class BaseTrainer(AbstractTrainer, Stateful):
         self,
         parameters: Iterable[torch.Tensor],
         p=2,
-        error_if_nonfinite=False,
         foreach: bool | None = None,
     ):
-        return self.world.get_total_norm(
-            parameters=parameters,
-            norm_type=p,
-            error_if_nonfinite=error_if_nonfinite,
-            foreach=foreach,
-        )
+        return self.world.get_total_norm(parameters=parameters, norm_type=p, foreach=foreach)
 
     @torch.no_grad()
     def clip_gradient_norm(
@@ -504,9 +508,16 @@ class BaseTrainer(AbstractTrainer, Stateful):
             or should_perform_validation
         )
 
+    @property
+    def num_gradient_accumulation_steps(self) -> int:
+        return self._num_gradient_accumulation_steps
+
     ######################
     # Model Fitting Loop #
     ######################
+
+    def post_setup(self):
+        pass
 
     def pre_fit(self):
         pass
@@ -565,9 +576,15 @@ class BaseTrainer(AbstractTrainer, Stateful):
             )
 
             # Train Step
+            batch = self.pre_train_step(batch, batch_idx)
             self.callbacks.pre_train_step(batch, batch_idx)
             with self.train_context():
                 result = self.training_step(batch, batch_idx)
+                result = apply_to_collection(
+                    result,
+                    function=lambda x: x.detach(),
+                    dtype=torch.Tensor,
+                )
 
             self.callbacks.post_train_step(result, batch_idx)
             self.local_batches += 1
@@ -631,6 +648,10 @@ class BaseTrainer(AbstractTrainer, Stateful):
         self.world.barrier()
         self.callbacks.pre_validation_epoch()
 
+        # Reset metrics
+        for metric in self.named_metrics().values():
+            metric.reset()
+
         # Validation Epoch Loop
         batch_idx = 0
         for batch in self.val_dataloader:
@@ -644,10 +665,16 @@ class BaseTrainer(AbstractTrainer, Stateful):
                 dtype=torch.Tensor,
             )
 
+            self.pre_validation_step(batch, batch_idx)
             self.callbacks.pre_validation_step(batch, batch_idx)
 
             with stacked_context(self.callbacks.validation_context()):
                 result = self.validation_step(batch, batch_idx)
+                result = apply_to_collection(
+                    result,
+                    function=lambda x: x.detach(),
+                    dtype=torch.Tensor,
+                )
 
             self.callbacks.post_validation_step(result, batch_idx)
             batch_idx += 1
@@ -663,6 +690,14 @@ class BaseTrainer(AbstractTrainer, Stateful):
             for module in model.modules():
                 if isinstance(module, FSDPModule):
                     module.reshard()
+
+        # Update metrics & append to result
+        metric_dict = {
+            f"{title}/{name}": value
+            for title, metrics in self.named_metrics().items()
+            for name, value in metrics.compute().items()
+        }
+        result = {**result, **metric_dict}
 
         # Validation Epoch End
         self.callbacks.post_validation_epoch(result)
@@ -773,6 +808,7 @@ class BaseTrainer(AbstractTrainer, Stateful):
         self.callbacks.pre_setup()
         self.setup()
         self._setup_trainer_metadata()
+        self.post_setup()
         self.callbacks.post_setup()
         self.world.barrier()
 

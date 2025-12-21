@@ -20,9 +20,9 @@ class LoadPartialCheckpointCallback(Callback[DreamTrainer]):
     useful for e.g. fine-tuning a model from a checkpoint.
     """
 
-    def __init__(self, path: str | Path, resume_mode: Literal["min", "max", "last"] = "last"):
+    def __init__(self, path: str | Path, resume_mode: Literal["min", "max", "last"] | int = "last"):
         self.path = Path(path)
-        self.resume_mode: Literal["min", "max", "last"] = resume_mode
+        self.resume_mode: Literal["min", "max", "last"] | int = resume_mode
 
     @override
     def post_setup(self):
@@ -40,8 +40,7 @@ class LoadPartialCheckpointCallback(Callback[DreamTrainer]):
         logger.info(f"Loading weights from {checkpoint.checkpoint_id}")
 
         # Only load necessary states
-        state_dict = self.trainer.state_dict(flatten_optimizer_state_dict=True)
-
+        state_dict = self.trainer.state_dict()
         state_dict.pop("trainer")
         state_dict.pop("optimizers")
         state_dict.pop("schedulers")

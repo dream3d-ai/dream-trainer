@@ -119,6 +119,7 @@ def entrypoint(func: F) -> F:
                     "MASTER_ADDR": addr,
                     "MASTER_PORT": str(port),
                     "TORCHELASTIC_RUN_ID": run_id,
+                    "OMP_NUM_THREADS": str(os.cpu_count() or 1),
                 }
             )
             func(*args, **kwargs)
@@ -127,6 +128,7 @@ def entrypoint(func: F) -> F:
             logger.info(
                 f"No distributed environment found, starting {world_size} local processes"
             )
+            os.environ["OMP_NUM_THREADS"] = str(max((os.cpu_count() or 1) // world_size, 1))
             launch_agent(
                 config=LaunchConfig(
                     min_nodes=1,

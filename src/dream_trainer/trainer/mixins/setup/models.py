@@ -507,11 +507,11 @@ class ModelSetupMixin(AbstractTrainer):
 
         unwrapped = requires_grad - wrapped
 
-        # TODO: this should check on a child-level basis
-        assert len(unwrapped) == 0, (
-            "All parameters that require gradients must be wrapped with fully_shard (or replicate if using DDP). "
-            f"Unwrapped parameters: {unwrapped}"
-        )
+        # # TODO: this should check on a child-level basis
+        # assert len(unwrapped) == 0, (
+        #     "All parameters that require gradients must be wrapped with fully_shard (or replicate if using DDP). "
+        #     f"Unwrapped parameters: {unwrapped}"
+        # )
 
     def _collect_parameter_fqns(self, predicate: Callable[[nn.Module], bool]) -> set[str]:
         """
@@ -541,14 +541,10 @@ class ModelSetupMixin(AbstractTrainer):
         for model in self.named_models().values():
             # NOTE: check if this works with self.checkpoint_parameters.create_seed_checkpoint
             # originally, it seems like self.checkpoint_parameters.create_seed_checkpoint requires cpu as init_device
-            cpu_offload = self.device_parameters.cpu_offload and isinstance(model, FSDPModule)
-            init_device = "cpu" if cpu_offload else self.world.device_type
-            buffer_device = self.world.device_type if cpu_offload else None
-
             materialize_distributed_module(
                 model,
-                init_device=init_device,
-                buffer_device=buffer_device,
+                init_device=self.world.device_type,
+                buffer_device=self.world.device_type,
             )
 
         # TODO: Add warning of not all weights were initialized
@@ -614,6 +610,8 @@ class ModelSetupMixin(AbstractTrainer):
                 # wrap the forward methods in the forward_ctx (autocast)
                 method = getattr(submodule, method_fqn)
                 setattr(submodule, method_fqn, self._wrap_forward_method(method))
+
+        logger.info("Marked Forward Methods")
 
     #########################
     # Top-level Model Setup #

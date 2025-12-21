@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -16,15 +16,12 @@ class CheckpointParameters:
 
     keep_top_k: int = 5
     strict_load: bool = False
-    ignore_frozen_params: bool = False
-    flatten_optimizer_state_dict: bool = True
 
     model_weights_only: bool = True
-    exclude_from_loading: list[str] = field(default_factory=list)
     pin_memory: bool = False
 
     def __post_init__(self):
-        if self.enable and self.keep_top_k <= 1:
+        if self.enable and (self.keep_top_k <= 1 and self.keep_top_k >= 0):
             raise ValueError(
                 "We need to maintain at least 2 checkpoint replicas, "
                 "as the last one may be in the process of being saved."

@@ -4,9 +4,8 @@ from typing import Literal
 import torch
 import torch._inductor.config
 import torch.nn as nn
-from torchao.float8 import CastConfig, Float8LinearConfig
+from torchao.float8 import CastConfig, Float8LinearConfig, ScalingGranularity
 from torchao.float8.config import Float8LinearRecipeName, Float8TypeConfig, ScalingType
-from torchao.float8.float8_linear import ScalingGranularity
 
 from dream_trainer.trainer.mixins.quantize import QuantizeModuleFilter
 
@@ -20,13 +19,13 @@ class Fp8QuantizeConfig:
         if self.recipe != "inference":
             self.recipe = Float8LinearRecipeName(self.recipe)
 
-    def to_config(self) -> tuple[Float8LinearConfig, QuantizeModuleFilter]:
+    def to_config(self, fsdp_enabled: bool) -> tuple[Float8LinearConfig, QuantizeModuleFilter]:
         type_config = Float8TypeConfig()
         e4m3_dtype = type_config.e4m3_dtype
 
         if self.recipe is Float8LinearRecipeName.TENSORWISE:
             return Float8LinearConfig(
-                enable_fsdp_float8_all_gather=True, pad_inner_dim=self.pad_inner_dim
+                enable_fsdp_float8_all_gather=fsdp_enabled, pad_inner_dim=self.pad_inner_dim
             ), AutoFilterForTensorwise()
         elif self.recipe is Float8LinearRecipeName.ROWWISE:
             torch._inductor.config.emulate_precision_casts = True

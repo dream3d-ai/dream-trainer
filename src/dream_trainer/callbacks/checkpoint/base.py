@@ -74,6 +74,7 @@ class CheckpointCallback(Callback[DreamTrainer]):
     # Metric Reporting #
     # ##################
 
+    @torch.no_grad()
     def _report_metric(self, result: dict[str, Any]):
         metric = result.get(self.config.monitor)
         if metric is None:
@@ -124,9 +125,7 @@ class CheckpointCallback(Callback[DreamTrainer]):
     def load(self, checkpoint: Checkpoint):
         gc.collect(generation=1)
 
-        state_dict = self.trainer.state_dict(
-            ignore_frozen_params=self.config.ignore_frozen_params
-        )
+        state_dict = self.trainer.state_dict()
         self._load(checkpoint, state_dict)
         self.trainer.load_state_dict(state_dict, strict=self.config.strict_load)
 
@@ -148,13 +147,7 @@ class CheckpointCallback(Callback[DreamTrainer]):
         )
 
         gc.collect(generation=1)
-        self._save(
-            checkpoint,
-            self.trainer.state_dict(
-                ignore_frozen_params=self.config.ignore_frozen_params,
-                flatten_optimizer_state_dict=self.config.flatten_optimizer_state_dict,
-            ),
-        )
+        self._save(checkpoint, self.trainer.state_dict())
         gc.collect(generation=1)
 
     # ################
@@ -201,6 +194,10 @@ class CheckpointCallback(Callback[DreamTrainer]):
         self._report_metric(result)
 
     @override
+    def post_validation_epoch(self, result: dict[str, Any]):
+        self._report_metric(result)
+
+    @override
     def pre_train_epoch(self):
         # Checkpointing runs at the start of each epoch
         if self.should_checkpoint:
@@ -208,7 +205,9 @@ class CheckpointCallback(Callback[DreamTrainer]):
 
     def _cleanup_checkpoints(self):
         checkpoints = find_checkpoints(self.root_dir, self.config.resume_mode)
-        purge_checkpoints = checkpoints[self.config.keep_top_k :]
+        purge_checkpoints = (
+            checkpoints[self.config.keep_top_k :] if self.config.keep_top_k > 0 else []
+        )
 
         if self.trainer.world.is_global_zero:
             for checkpoint in purge_checkpoints:

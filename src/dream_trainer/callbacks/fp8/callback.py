@@ -2,7 +2,7 @@ import warnings
 
 from torch.distributed.fsdp import FSDPModule
 from torchao.float8 import convert_to_float8_training, precompute_float8_dynamic_scale_for_fsdp
-from torchao.quantization import float8_dynamic_activation_float8_weight
+from torchao.quantization import Float8DynamicActivationFloat8WeightConfig
 from torchao.quantization.transform_module import _QUANTIZE_CONFIG_HANDLER
 from typing_extensions import override
 
@@ -66,13 +66,13 @@ class Fp8Quantization(Callback[QuantizeMixin]):
         )
 
         for module_name, config in self.model_to_recipe.items():
-            if config.recipe == "inference":
+            module = self.trainer.named_models()[module_name]
+            if config.recipe != "inference":
                 # These need to be applied after the model is materialized
                 continue
             else:
-                config, default_filter = config.to_config()
+                config, default_filter = config.to_config(isinstance(module, FSDPModule))
 
-            module = self.trainer.named_models()[module_name]
             quantize_filter = quantize_filters[module_name] + default_filter
 
             setattr(
@@ -98,11 +98,7 @@ class Fp8Quantization(Callback[QuantizeMixin]):
         for module_name, config in self.model_to_recipe.items():
             model = self.trainer.named_models()[module_name]
 
-            if (
-                module_name in self.trainer._quantized_models
-                and config.recipe == "tensorwise"
-                and isinstance(model, FSDPModule)
-            ):
+            if module_name in self.trainer._quantized_models and config.recipe == "tensorwise":
                 optimizers = self.trainer.get_optimizers_by_model(module_name)
                 if len(optimizers) == 0:
                     logger.warning(
@@ -117,7 +113,7 @@ class Fp8Quantization(Callback[QuantizeMixin]):
 
         # Quantize inference models
         quantize_filters = self.trainer.quantize_module_filters()
-        config = float8_dynamic_activation_float8_weight()
+        config = Float8DynamicActivationFloat8WeightConfig()
         handler = _QUANTIZE_CONFIG_HANDLER[type(config)]  # type: ignore
 
         for module_name, recipe in self.model_to_recipe.items():

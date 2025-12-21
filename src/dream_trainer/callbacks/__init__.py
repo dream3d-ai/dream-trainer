@@ -5,6 +5,7 @@ from .checkpoint import (
     ExportCallback,
     LoadPartialCheckpointCallback,
 )
+from .ema import EMACallback
 from .gc import GarbageCollectionCallback
 from .graph_breaks import FindGraphBreaksCallback
 from .loggers import LoggerCallback, LRLoggerCallback, MediaLoggerCallback
@@ -52,6 +53,7 @@ __all__ = [
     "Callback",
     "CallbackCollection",
     "CheckpointCallback",
+    "EMACallback",
     "ExportCallback",
     "FaultToleranceCallback",
     "FindGraphBreaksCallback",

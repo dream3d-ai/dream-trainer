@@ -1,11 +1,44 @@
-import itertools
-
 import torch
-import torch.distributed
-import torch.distributed.checkpoint.stateful
 import torch.nn as nn
+from torch.distributed.fsdp import CPUOffloadPolicy, FSDPModule
+from torch.distributed.fsdp._fully_shard._fsdp_param_group import FSDPParamGroup
+from typing_extensions import cast
 
 from dream_trainer.utils import logger
+
+
+def materialize_buffers(
+    module: nn.Module, buffer_device: torch.device | str | None, uninitialized_modules: set[str]
+):
+    if callable(reset_method := getattr(module, "reset_parameters", None)):
+        reset_method()  # type: ignore
+    elif not all(False for _ in module.buffers(recurse=False)):
+        uninitialized_modules.add(f"{type(module).__name__}.{type(module).__name__}")
+
+    for name, buffer in module.named_buffers(recurse=False):
+        module.register_buffer(
+            name,
+            buffer.to(buffer_device),
+            persistent=name not in module._non_persistent_buffers_set,
+        )
+
+    for submodule in module.children():
+        materialize_buffers(submodule, buffer_device, uninitialized_modules)
+
+    return uninitialized_modules
+
+
+def _has_cpu_offload(module: nn.Module) -> bool:
+    if (
+        isinstance(module, FSDPModule)
+        and module._get_fsdp_state()._fsdp_param_group is not None
+        and isinstance(
+            cast(FSDPParamGroup, module._get_fsdp_state()._fsdp_param_group).offload_policy,
+            CPUOffloadPolicy,
+        )
+    ):
+        return True
+    return any(_has_cpu_offload(child) for child in module.children())
 
 
 def materialize_distributed_module(
@@ -28,34 +61,13 @@ def materialize_distributed_module(
         - Moves all buffers to `buffer_device`.
         - Logs a warning if any submodules with parameters or buffers do not define a `reset_parameters()` method.
     """
-    module.to_empty(device=init_device)
-
-    uninitialized_modules = set()
-    for submodule in module.modules():
-        if all(
-            False
-            for _ in itertools.chain(
-                submodule.parameters(recurse=False), submodule.buffers(recurse=False)
-            )
-        ):
-            # module has no parameters or buffers
-            continue
-        if callable(reset_method := getattr(submodule, "reset_parameters", None)):
-            reset_method()  # type: ignore
-        else:
-            uninitialized_modules.add(f"{type(module).__name__}.{type(submodule).__name__}")
-
-        # move buffers to device
-        for name, buffer in submodule.named_buffers(recurse=False):
-            submodule.register_buffer(
-                name,
-                buffer.to(buffer_device),
-                persistent=name not in submodule._non_persistent_buffers_set,
-            )
+    device = "cpu" if _has_cpu_offload(module) else init_device
+    module.to_empty(device=device)
+    uninitialized_modules = materialize_buffers(module, buffer_device, set())
 
     if uninitialized_modules:
         logger.warning(
-            "Parameter initialization incomplete. The following modules have parameters or buffers with uninitialized"
+            f"Parameter initialization incomplete for model {type(module).__name__}. The following modules have parameters or buffers with uninitialized"
             " memory because they don't define a `reset_parameters()` method for re-initialization:"
             f" {', '.join(uninitialized_modules)}"
         )

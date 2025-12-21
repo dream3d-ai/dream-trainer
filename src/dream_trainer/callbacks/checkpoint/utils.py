@@ -44,7 +44,11 @@ def find_top_k_checkpoints(
 
 def find_current_checkpoint(
     checkpoint_dir: Path,
-    mode: Literal["min", "max", "last"],
+    mode: Literal["min", "max", "last"] | int,
 ) -> Checkpoint | None:
-    checkpoints = find_top_k_checkpoints(checkpoint_dir, mode, k=1)
+    if isinstance(mode, int):
+        checkpoints = find_checkpoints(checkpoint_dir, "last")
+        checkpoints = [c for c in checkpoints if c.step == mode]
+    else:
+        checkpoints = find_top_k_checkpoints(checkpoint_dir, mode, k=1)
     return checkpoints[0] if len(checkpoints) == 1 else None

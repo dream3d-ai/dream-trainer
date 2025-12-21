@@ -4,6 +4,7 @@ import torch
 
 from dream_trainer.trainer.mixins.eval_metric import EvalMetricMixin
 from dream_trainer.trainer.mixins.loggers import LoggerMixin
+from dream_trainer.utils import logger
 
 from ..callback import Callback
 
@@ -21,6 +22,15 @@ def filter_logs(result: dict[str, Any]) -> dict[str, Any]:
 class MetricLoggerCallback(Callback[LoggerEvalMetricMixin]):
     _dependency = (LoggerMixin, EvalMetricMixin)
 
+    def __init__(self):
+        logger.warning(
+            "MetricLoggerCallback is deprecated. Metrics are now logged automatically by the LoggerCallback."
+        )
+
+    def pre_validation_epoch(self):
+        for metric in self.trainer.named_metrics().values():
+            metric.reset()
+
     def post_validation_epoch(self, result: dict[str, Any]):
         val_metrics = self.trainer.named_metrics() or {}
         metric_dict = {
@@ -28,7 +38,5 @@ class MetricLoggerCallback(Callback[LoggerEvalMetricMixin]):
             for title, metrics in val_metrics.items()
             for name, value in metrics.compute().items()
         }
-        for metrics in val_metrics.values():
-            metrics.reset()
 
         self.trainer.log_dict({**metric_dict, **filter_logs(result)})

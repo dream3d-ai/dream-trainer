@@ -6,6 +6,7 @@ import warnings
 from concurrent.futures import Future
 from typing import Any
 
+import torch
 import torch.distributed.checkpoint as dcp
 from typing_extensions import override
 
@@ -105,6 +106,7 @@ class AsyncCheckpointCallback(CheckpointCallback):
         if batch_idx == 0:
             self._wait_load()
 
+    @torch.no_grad()
     def pre_train_step(self, batch: dict[str, Any], batch_idx: int):
         if batch_idx == 0:
             self._wait_load()

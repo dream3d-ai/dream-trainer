@@ -41,6 +41,7 @@ class DeviceParameters:
     param_dtype: torch.dtype = torch.bfloat16
     reduce_dtype: torch.dtype = torch.float32
     cpu_offload: bool = False
+    error_if_nonfinite: bool = False
 
     ## Model Compilation
     checkpoint_activations: bool = False
@@ -103,13 +104,12 @@ class DeviceParameters:
     • "alltoall"  → direct shard-for-shard swap
     """
 
-    ## Debug
-    run_single_device_as_fsdp: bool = False
-    run_single_device_as_ddp: bool = False
+    force_fsdp: bool = False
+    force_ddp: bool = False
 
     def __post_init__(self):
-        if self.run_single_device_as_fsdp and self.run_single_device_as_ddp:
-            raise ValueError("Cannot run single device as both FSDP and DDP")
+        if self.force_fsdp and self.force_ddp:
+            raise ValueError("Cannot force both FSDP and DDP")
 
     @classmethod
     def HSDP(
@@ -152,6 +152,7 @@ class DeviceParameters:
         cpu_offload: bool = False,
         checkpoint_activations: bool = False,
         compiled_autograd: bool = False,
+        async_tensor_parallel=True,
     ) -> "DeviceParameters":
         """
         TP within nodes
@@ -160,12 +161,14 @@ class DeviceParameters:
         global_world_size = dist_util.core.get_dist_world_size()
         local_world_size = dist_util.core.get_dist_local_world_size()
         if tensor_parallel == "auto" and dp_shard == "auto":
-            logger.info(
-                "Using FSDP with both tensor_parallel and dp_shard set to auto, "
-                f"setting dp_shard=1 and tensor_parallel={local_world_size}"
-            )
             tensor_parallel = local_world_size
             dp_shard = global_world_size // tensor_parallel
+
+            logger.info(
+                "Using FSDP with both tensor_parallel and dp_shard set to auto, "
+                f"setting dp_shard={dp_shard} and tensor_parallel={tensor_parallel}"
+            )
+
         elif tensor_parallel == "auto":
             assert isinstance(dp_shard, int)
             tensor_parallel = global_world_size // dp_shard
@@ -191,6 +194,7 @@ class DeviceParameters:
             _context_parallel=1,
             _pipeline_parallel=1,
             compiled_autograd=compiled_autograd,
+            async_tensor_parallel=async_tensor_parallel,
         )
 
     @classmethod
