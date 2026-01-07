@@ -1,122 +1,319 @@
-# Dream Trainer Documentation
+# Dream Trainer
 
-Dream Trainer is a powerful, distributed training framework built exclusively around PyTorch's new DTensor abstractions. It provides a flexible, composable approach that makes it easy to adopt the latest PyTorch DTensor APIs.
+**A composable distributed training framework built on PyTorch DTensor**
 
-Dream Trainer was created to address these core issues:
+Dream Trainer simplifies advanced distributed training by providing a flexible, mixin-based architecture that embraces PyTorch's next-generation DTensor abstractions. Write clean training code that scales from a single GPU to thousands.
 
-- **Boilerplate Overload**: Each parallelism scheme (DDP, FSDP, tensor, pipeline, etc.) requires its own verbose, error-prone setup & configuration that must be applied in the correct order.
-- **Legacy Trainer Limitations**: Most trainers are tightly coupled to old DDP/FSDP APIs and "zero-config" abstractions, making debugging harder and preventing them from taking advantage of new DTensor-based distributed patterns. Being DTensor-native makes code simpler and easier to debug.
-- **Complexity in Real Workflows**: Even simple training scripts become unwieldy when mixing advanced parallelism, due to scattered configuration and framework assumptions.
+<div class="grid cards" markdown>
 
-## 🏗️ Design Principles
+-   :material-clock-fast:{ .lg .middle } __Get Started in 5 Minutes__
 
-Dream Trainer is built on three core principles:
+    ---
 
-1. **Native PyTorch First**
+    Install Dream Trainer and train your first model with advanced parallelism
 
-   - Designed exclusively around PyTorch's new DTensor abstractions for simple but powerful parallelism
-   - Direct integration with PyTorch's ecosystem (torchao, torchft, DCP, torchrun)
+    [:octicons-arrow-right-24: Getting Started](getting-started.md)
 
-2. **Minimal Assumptions**
+-   :material-puzzle:{ .lg .middle } __Composable by Design__
 
-   - Let users make their own choices
-   - No automatic model wrapping or hidden behaviors
-   - Assume users know what they're doing with advanced parallelism
+    ---
 
-3. **Composable Architecture**
-   - Trainer is a composition of mixins
-   - Take what you need, drop the rest
-   - Write your own components when needed
-   - Callback system for drop-in modifications to the loop
+    Mix and match features with our mixin architecture - take only what you need
 
-## 🌟 Key Features
+    [:octicons-arrow-right-24: Core Concepts](core-concepts.md)
+
+-   :material-server-network:{ .lg .middle } __DTensor-Native__
+
+    ---
+
+    First-class support for FSDP2, Tensor Parallelism, Pipeline Parallelism, and more
+
+    [:octicons-arrow-right-24: Parallelism Guide](parallelism.md)
+
+-   :material-cog:{ .lg .middle } __Extensible Callbacks__
+
+    ---
+
+    Customize every aspect of training with the powerful callback system
+
+    [:octicons-arrow-right-24: Callbacks](callbacks.md)
+
+</div>
+
+---
+
+## Why Dream Trainer?
+
+### The Problem
+
+Modern distributed training is complex. Each parallelism scheme requires verbose, error-prone setup that must be applied in the correct order. Traditional frameworks are tightly coupled to legacy APIs, making debugging difficult and preventing adoption of new DTensor-based patterns.
+
+### The Solution
+
+Dream Trainer takes a different approach:
+
+=== "Composable Architecture"
+
+    ```python
+    # Start minimal - just the essentials
+    class SimpleTrainer(BaseTrainer, SetupMixin):
+        def training_step(self, batch, batch_idx):
+            loss = self.model(batch)
+            self.backward(loss)
+            return {"loss": loss}
+
+    # Add features as you need them
+    class ProductionTrainer(BaseTrainer, SetupMixin,
+                           EvalMetricMixin, WandBLoggerMixin):
+        pass  # Now with metrics and logging!
+    ```
+
+=== "DTensor-Native"
+
+    ```python
+    # Every parameter is a DTensor - clean, debuggable distributed code
+    def apply_tensor_parallel(self, tp_mesh):
+        for layer in self.model.layers:
+            parallelize_module(layer, tp_mesh, {
+                "attn.qkv": ColwiseParallel(),
+                "attn.out": RowwiseParallel(),
+            })
+    ```
+
+=== "Config as Code"
+
+    ```python
+    @dataclass
+    class MyConfig(DreamTrainerConfig):
+        learning_rate: float = 3e-4  # Type-checked!
+        num_layers: int = 12         # IDE auto-completion!
+
+        def validate(self):
+            assert self.num_layers >= 1, "Need at least 1 layer"
+    ```
+
+---
+
+## Feature Highlights
 
 ### Parallelism Support
 
-Dream Trainer provides simple configuration for all PyTorch parallelism schemes:
+| Strategy | Description | Use Case |
+|----------|-------------|----------|
+| **FSDP2** | Fully Sharded Data Parallel on DTensor | Memory-efficient large model training |
+| **Tensor Parallelism** | Parameter sharding across devices | Very large layers (LLM attention) |
+| **Pipeline Parallelism** | Layer pipelining with auto-scheduling | Models too large for single device |
+| **Context Parallelism** | Sequence parallelism | Extremely long sequences |
+| **HSDP** | Hybrid sharding (TP + FSDP) | Multi-node clusters |
 
-- **Data Parallelism**: Basic multi-GPU training with PyTorch's `replicate()` API
-- **FSDP2**: Second-generation Fully Sharded Data Parallel built on DTensor
-- **Tensor Parallelism (TP)**: Parameter-wise sharding via DTensor layouts; composable with FSDP2 for HSDP
-- **Context Parallelism (CP)**: Sequence parallelism for extremely long contexts
-- **Pipeline Parallelism (PP)**: Layer pipelining across GPUs / nodes with automatic schedule search
+### Training Features
 
+- **Automatic gradient accumulation** with proper scaling
+- **Mixed precision training** (FP16, BF16, FP8)
+- **Gradient clipping** per optimizer
+- **Learning rate scheduling** with warmup support
+- **Distributed checkpointing** via PyTorch DCP
+- **Fault tolerance** via torchft integration
 
-Unlike monolithic frameworks, Dream Trainer uses mixins to let you pick exactly what you need:
+### Developer Experience
+
+- **Type-safe configurations** with dataclass validation
+- **Comprehensive callbacks** for every training phase
+- **Built-in logging** to WandB, TensorBoard, and more
+- **Progress tracking** with tqdm integration
+- **Debugging utilities** for distributed training
+
+---
+
+## Quick Example
 
 ```python
-# Minimal trainer for research
-class SimpleTrainer(BaseTrainer, SetupMixin):
+from dataclasses import dataclass
+from dream_trainer import DreamTrainer, DreamTrainerConfig
+from dream_trainer.configs import DeviceParameters, TrainingParameters
+from dream_trainer.callbacks import CheckpointCallback, LoggerCallback
+
+@dataclass
+class MyConfig(DreamTrainerConfig):
+    hidden_size: int = 768
+    num_layers: int = 12
+    learning_rate: float = 3e-4
+
+class MyTrainer(DreamTrainer):
+    config: MyConfig
+
+    def configure_models(self):
+        self.model = TransformerModel(
+            hidden_size=self.config.hidden_size,
+            num_layers=self.config.num_layers,
+        )
+
+    def configure_optimizers(self):
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=self.config.learning_rate
+        )
+
+    def configure_dataloaders(self):
+        return train_loader, val_loader
+
     def training_step(self, batch, batch_idx):
-        loss = self.model(batch)
+        loss = self.model(batch["input_ids"])
         self.backward(loss)
+
+        if not self.is_accumulating_gradients:
+            self.step(self.optimizer)
+
         return {"loss": loss}
 
-# Production trainer with all the bells and whistles
-class ProductionTrainer(BaseTrainer, SetupMixin, EvalMetricMixin, 
-                       WandBLoggerMixin, QuantizeMixin):
-    # Same training_step, but now with metrics, logging, and quantization!
+# Configure and run
+config = MyConfig(
+    device_parameters=DeviceParameters.FSDP(dp_shard=4),
+    training_parameters=TrainingParameters(n_epochs=10),
+)
+
+trainer = MyTrainer(config)
+trainer.fit()
 ```
 
-### Other Features via Callbakcs
+---
 
-- **Checkpointing** DCP-based checkpointing with async checkpoint support
-- **Built-in Fault Tolerance** via torchft
-- **Native FP8 Quantization** via torchao
-- **Custom Callbacks** for extensibility
-- **Build-your-own-trainer** by composing mixin primitives
+## Documentation
 
-## 🤔 Why Dream Trainer vs. Other Frameworks?
+### Getting Started
 
-While PyTorch Lightning, Accelerate and DeepSpeed simplify distributed training, they revolve around classic DDP/FSDP wrappers and hide key details behind heavyweight base classes. Dream Trainer takes a different path:
+<div class="grid cards" markdown>
 
-- **DTensor-native** from day one—every parameter is a `DTensor`, so new sharding layouts appear the moment they land in PyTorch nightly.
-- **Parallel schemes (FSDP2, TP, PP, CP)** are first-class, composable primitives, not bolt-on "plugins".
-- **Mix-and-match** – DreamTrainer is designed around mixins to maximize composability.
-- **Minimal magic** – no metaclasses, no `LightningModule`; your model remains a plain `nn.Module`.
+-   :material-download:{ .lg .middle } [**Installation**](installation.md)
 
-## 📚 Documentation Structure
+    System requirements, pip install, optional dependencies
 
-### Core Concepts
+-   :material-rocket-launch:{ .lg .middle } [**Quick Start**](getting-started.md)
 
-- [Getting Started](getting-started.md) - Installation and basic usage
-- [Configuration](configuration.md) - Detailed configuration options
-- [Trainer Guide](trainer-guide.md) - Creating custom trainers
-- [Callbacks](callbacks.md) - Extending functionality with callbacks
+    Your first trainer in 5 minutes
 
-### Advanced Features
+-   :material-book-open:{ .lg .middle } [**Core Concepts**](core-concepts.md)
 
-- [Distributed Training](distributed.md) - Multi-GPU and multi-node training
-- [Mixed Precision](mixed-precision.md) - FP16, BF16, and FP8 training
-- [Checkpointing](checkpointing.md) - Model saving and loading
-- [Logging](logging.md) - Metrics and experiment tracking
+    DTensor, mixins, and the training loop
 
-### Examples & Tutorials
+</div>
 
-- [Basic Examples](examples/basic.md) - Simple training examples
-- [Advanced Examples](examples/advanced.md) - Complex use cases
-- [Best Practices](best-practices.md) - Training optimization tips
+### User Guide
+
+<div class="grid cards" markdown>
+
+-   :material-cog:{ .lg .middle } [**Configuration**](configuration.md)
+
+    Training, device, and checkpoint parameters
+
+-   :material-puzzle-outline:{ .lg .middle } [**Trainer Guide**](trainer-guide.md)
+
+    Building custom trainers with mixins
+
+-   :material-webhook:{ .lg .middle } [**Callbacks**](callbacks.md)
+
+    Extend training with custom callbacks
+
+-   :material-server-network:{ .lg .middle } [**Parallelism**](parallelism.md)
+
+    FSDP2, TP, PP, CP, and HSDP
+
+-   :material-bug:{ .lg .middle } [**Debugging**](debugging.md)
+
+    Debug distributed training issues
+
+-   :material-speedometer:{ .lg .middle } [**Performance**](performance.md)
+
+    Optimize training throughput
+
+</div>
+
+### Tutorials
+
+<div class="grid cards" markdown>
+
+-   :material-school:{ .lg .middle } [**Your First Trainer**](tutorials/first-trainer.md)
+
+    Step-by-step guide to building a trainer
+
+-   :material-chip:{ .lg .middle } [**Multi-GPU Training**](tutorials/multi-gpu.md)
+
+    Scale to multiple GPUs with FSDP2
+
+-   :material-wrench:{ .lg .middle } [**Custom Components**](tutorials/custom-components.md)
+
+    Write your own mixins and callbacks
+
+-   :material-factory:{ .lg .middle } [**Production Setup**](tutorials/production.md)
+
+    Deploy to clusters with fault tolerance
+
+</div>
+
+### Examples
+
+<div class="grid cards" markdown>
+
+-   :material-image:{ .lg .middle } [**Vision Models**](examples/vision.md)
+
+    Image classification, segmentation, diffusion
+
+-   :material-text:{ .lg .middle } [**Language Models**](examples/nlp.md)
+
+    GPT, LLaMA, and transformer training
+
+-   :material-image-text:{ .lg .middle } [**Multi-Modal**](examples/multimodal.md)
+
+    Vision-language models and CLIP
+
+-   :material-code-braces:{ .lg .middle } [**Advanced Patterns**](examples/advanced.md)
+
+    EMA, knowledge distillation, curriculum learning
+
+</div>
 
 ### API Reference
 
-- [Trainer API](api/trainer.md) - Core trainer classes
-- [Config API](api/config.md) - Configuration classes
-- [Callback API](api/callbacks.md) - Built-in callbacks
-- [Utils API](api/utils.md) - Utility functions
+<div class="grid cards" markdown>
 
+-   :material-api:{ .lg .middle } [**API Overview**](api/index.md)
 
-## 🔧 Requirements
+    Complete API documentation
 
-- Python >= 3.10
-- PyTorch >= 2.7.0
-- CUDA-capable GPU (recommended)
+-   :material-school:{ .lg .middle } [**Trainers**](api/trainers/base.md)
 
-## 📖 Next Steps
+    AbstractTrainer, BaseTrainer, DreamTrainer
 
-- Follow the [Getting Started](getting-started.md) guide to install and set up Dream Trainer
-- Check out the [Examples](examples/basic.md) for complete working code
-- Read the [Trainer Guide](trainer-guide.md) to create your own custom trainer
+-   :material-puzzle:{ .lg .middle } [**Mixins**](api/mixins/setup.md)
 
-## 🤝 Contributing
+    SetupMixin, EvalMetricMixin, LoggerMixin
 
-We welcome contributions! Please see our [Contributing Guide](contributing.md) for details.
+-   :material-webhook:{ .lg .middle } [**Callbacks**](api/callbacks/base.md)
+
+    Checkpoint, logging, performance callbacks
+
+</div>
+
+---
+
+## Requirements
+
+| Requirement | Version |
+|-------------|---------|
+| Python | >= 3.10 |
+| PyTorch | >= 2.7.0 |
+| CUDA | 11.8+ (recommended) |
+
+---
+
+## Community
+
+- [:fontawesome-brands-github: GitHub](https://github.com/dream3d/dream-trainer) - Source code and issues
+- [:fontawesome-brands-discord: Discord](https://discord.gg/dream-trainer) - Chat with the community
+- [:fontawesome-brands-twitter: Twitter](https://twitter.com/dream3d_ai) - Latest updates
+
+---
+
+## License
+
+Dream Trainer is released under the [Apache 2.0 License](https://github.com/dream3d/dream-trainer/blob/main/LICENSE).
