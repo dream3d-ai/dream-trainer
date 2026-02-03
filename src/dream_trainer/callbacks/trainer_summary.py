@@ -70,6 +70,20 @@ def summarize_dataloaders(
     val_dataloader: Iterable,
     title: str = "Dataloader Summary",
 ):
+    # Check if dataloaders have their own summary attribute
+    train_summary = getattr(train_dataloader, "summarize", None)
+    val_summary = getattr(val_dataloader, "summarize", None)
+
+    if train_summary is not None and val_summary is not None:
+        console = Console()
+        console.print()
+        console.print("[bold]Train Dataloader Summary:[/bold]")
+        console.print(train_summary())
+        console.print()
+        console.print("[bold]Validation Dataloader Summary:[/bold]")
+        console.print(val_summary())
+        return
+
     train_batch_size = getattr(train_dataloader, "batch_size", None) or getattr(
         getattr(train_dataloader, "dataset", {}), "batch_size", None
     )

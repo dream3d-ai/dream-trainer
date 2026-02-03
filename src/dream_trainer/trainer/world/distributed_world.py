@@ -221,7 +221,7 @@ class DistributedWorld:
         Side Effects:
             - Sets self.world_mesh to the constructed mesh.
         """
-        os.environ["TORCH_NCCL_TRACE_BUFFER_SIZE"] = str(self.config.comm.trace_buf_size)
+        os.environ["TORCH_FR_BUFFER_SIZE"] = str(self.config.comm.trace_buf_size)
 
         # Set device-specific backends
         device_backend = c10d.Backend.default_device_backend_map.get(self.device_type)

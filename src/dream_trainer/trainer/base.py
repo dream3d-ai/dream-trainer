@@ -96,6 +96,7 @@ class BaseTrainer(EvalMetricMixin, Stateful):
 
         self.training = False
         self._local_step = 0
+        self.is_sanity_validation = False
 
     ###########################
     # AbstractTrainer Methods #
@@ -274,11 +275,11 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         """
         pass
 
-    def pre_validation_step(self, batch: dict[str, Any], batch_idx: int):
+    def pre_validation_step(self, batch: dict[str, Any], batch_idx: int) -> dict[str, Any]:
         """
         Called at the start of each validation step.
         """
-        pass
+        return batch
 
     @abstractmethod
     def validation_step(self, batch: dict[str, Any], batch_idx: int) -> dict[str, Any]:
@@ -596,10 +597,10 @@ class BaseTrainer(EvalMetricMixin, Stateful):
 
             # Reduce timeout after first train step for faster signal
             # (assuming lazy init and compilation are finished)
-            if self._local_step == 1 and not self.is_accumulating_gradients:
+            if self._local_step == 0:
                 self.world.set_pg_timeouts(
                     timeout=dt.timedelta(
-                        seconds=self.device_parameters.comm.train_timeout_seconds,
+                        seconds=1_800,  # self.device_parameters.comm.train_timeout_seconds,
                     ),
                 )
 
@@ -665,7 +666,7 @@ class BaseTrainer(EvalMetricMixin, Stateful):
                 dtype=torch.Tensor,
             )
 
-            self.pre_validation_step(batch, batch_idx)
+            batch = self.pre_validation_step(batch, batch_idx)
             self.callbacks.pre_validation_step(batch, batch_idx)
 
             with stacked_context(self.callbacks.validation_context()):
@@ -719,13 +720,17 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         if self.current_epoch > 0:
             return
 
+        logger.info(f"Performing {self._num_sanity_val_steps} sanity validation steps")
+
         # Store num val steps & temporarily override to num sanity val steps
         num_val_steps = self._num_val_steps
         self._num_val_steps = self._num_sanity_val_steps
+        self.is_sanity_validation = True
 
         # Call validation epoch normally & restore num val steps
         self.perform_validation_epoch()
         self._num_val_steps = num_val_steps
+        self.is_sanity_validation = False
 
     def _setup_trainer_metadata(self):
         """

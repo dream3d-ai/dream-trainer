@@ -111,13 +111,20 @@ class CheckpointCallback(Callback[DreamTrainer]):
         self.trainer.world.barrier()
 
     def _save(self, checkpoint: Checkpoint, state_dict: dict[str, Any]):
+        save_path = self.root_dir / checkpoint.checkpoint_id
+        if save_path.exists():
+            raise FileExistsError(
+                f"Checkpoint path already exists: {save_path}. "
+                "Refusing to overwrite existing checkpoint."
+            )
+
         logger.info(f"Saving checkpoint {checkpoint.checkpoint_id}")
         dcp.state_dict_saver.save(
             state_dict,
-            checkpoint_id=str(self.root_dir / checkpoint.checkpoint_id),
+            checkpoint_id=str(save_path),
             process_group=self.pg,
         )
-        logger.info(f"Saved checkpoint to {self.root_dir / checkpoint.checkpoint_id}")
+        logger.info(f"Saved checkpoint to {save_path}")
         self._cleanup_checkpoints()
         self.trainer.world.barrier()
 
@@ -173,6 +180,7 @@ class CheckpointCallback(Callback[DreamTrainer]):
     @override
     def pre_fit(self):
         # Load a checkpoint if it exists
+        logger.info(f"Checkpoint directory: {self.root_dir}")
         checkpoint = find_current_checkpoint(self.root_dir, self.config.resume_mode)
         if checkpoint is None:
             logger.info(f"Training {self.trainer.experiment} from scratch")

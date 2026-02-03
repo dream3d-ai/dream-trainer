@@ -1,3 +1,4 @@
+from math import ceil
 from typing import Any, Iterable
 
 from dream_trainer.utils import logger
@@ -108,4 +109,4 @@ def get_val_dataloader_steps(
             f"is greater than the number of batches in the dataloader, {_num_val_batches}. "
         )
 
-    return _num_val_batches // dp_size, num_sanity_val_steps // dp_size
+    return _num_val_batches // dp_size, ceil(num_sanity_val_steps / dp_size)

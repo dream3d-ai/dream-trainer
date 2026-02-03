@@ -14,6 +14,7 @@ from dream_trainer.trainer.mixins.quantize import QuantizeModuleFilter
 class Fp8QuantizeConfig:
     recipe: Float8LinearRecipeName | Literal["inference"] | str
     pad_inner_dim: bool = False
+    fsdp_fp8_allgather: bool = False
 
     def __post_init__(self):
         if self.recipe != "inference":
@@ -25,9 +26,11 @@ class Fp8QuantizeConfig:
 
         if self.recipe is Float8LinearRecipeName.TENSORWISE:
             return Float8LinearConfig(
-                enable_fsdp_float8_all_gather=fsdp_enabled, pad_inner_dim=self.pad_inner_dim
+                enable_fsdp_float8_all_gather=fsdp_enabled and self.fsdp_fp8_allgather,
+                pad_inner_dim=self.pad_inner_dim,
             ), AutoFilterForTensorwise()
         elif self.recipe is Float8LinearRecipeName.ROWWISE:
+            # https://github.com/pytorch/pytorch/issues/150859
             torch._inductor.config.emulate_precision_casts = True
 
             cc_i = CastConfig(

@@ -236,6 +236,16 @@ class WandBLoggerMixin(LoggerMixin):
 
     def log_config(self, config: dict[str, Any] | Any):
         if not isinstance(config, dict):
-            config = config_to_dict(config)
+            filt = lambda name, value: (not name.startswith("_")) or (
+                name
+                in (  # Log parallelism dimensions explicitly
+                    "_dp_shard",
+                    "_dp_replicate",
+                    "_tensor_parallel",
+                    "_context_parallel",
+                    "_pipeline_parallel",
+                )
+            )
+            config = config_to_dict(config, filt=filt)
 
         self._wandb.config.update(config, allow_val_change=True)

@@ -17,7 +17,6 @@ from functools import wraps
 from typing import Any, Callable, TypeVar
 
 import torch
-from torch.distributed.elastic.multiprocessing.api import DefaultLogsSpecs
 from torch.distributed.launcher.api import LaunchConfig, launch_agent
 
 from dream_trainer.utils import logger
@@ -138,7 +137,6 @@ def entrypoint(func: F) -> F:
                     rdzv_endpoint=f"{addr}:{port}",
                     run_id=run_id,
                     max_restarts=0,
-                    logs_specs=DefaultLogsSpecs(local_ranks_filter={0}),
                 ),
                 entrypoint=sys.executable,
                 args=sys.orig_argv[1:],

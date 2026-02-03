@@ -249,7 +249,7 @@ class DeviceParameters:
         assert len(auto_dims) <= 1, "At most one parallelism dimension can be set to 'auto'"
         assert all(
             degree == "auto" or int(degree) > 0 for degree in parallelism_dimensions.values()
-        ), "All parallelism dimensions must be set to 'auto' or a positive integer. Got {self}"
+        ), f"All parallelism dimensions must be set to 'auto' or a positive integer. Got {self}"
 
         world_size = dist_util.core.get_dist_world_size()
         if len(auto_dims) == 1:
