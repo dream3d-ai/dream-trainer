@@ -47,6 +47,9 @@ class AsyncCheckpointCallback(CheckpointCallback):
     def _save(self, checkpoint: Checkpoint, state_dict: dict[str, Any]):
         self._wait_save()  # wait for previous save to finish
 
+        if self._checkpoint_exists(checkpoint):
+            return
+
         logger.info(f"Saving checkpoint {checkpoint.checkpoint_id}")
         self._save_future = dcp.state_dict_saver.async_save(
             state_dict,

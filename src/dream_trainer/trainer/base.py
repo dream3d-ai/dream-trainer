@@ -66,7 +66,7 @@ class BaseTrainer(EvalMetricMixin, Stateful):
     callbacks: "CallbackCollection"
 
     # Internal State
-    _train_batch_size: int
+    _global_batch_size: int
     _num_train_batches: int
     _num_gradient_accumulation_steps: int
 
@@ -140,7 +140,9 @@ class BaseTrainer(EvalMetricMixin, Stateful):
             },
         }
 
-    def load_state_dict(self, state_dict: dict[str, Any], *, strict: bool = True) -> None:
+    def load_state_dict(
+        self, state_dict: dict[str, Any], *, strict: bool = True, resume_data: bool = True
+    ) -> None:
         """
         Load a complete state dictionary into the trainer.
 
@@ -154,6 +156,9 @@ class BaseTrainer(EvalMetricMixin, Stateful):
             strict: If True, raises ValueError when state_dict contains keys
                 that don't match the current trainer setup. If False, logs
                 warnings for mismatched keys instead.
+            resume_data: If True, resume dataloader/dataset state from checkpoint.
+                If False, skip loading dataloader state, allowing dataset changes
+                between runs.
 
         Raises:
             ValueError: If strict=True and state_dict contains unexpected keys.
@@ -192,16 +197,21 @@ class BaseTrainer(EvalMetricMixin, Stateful):
 
         # Load Dataloader State
         dataloader_state = state_dict.pop("dataloaders", {})
-        if "train" in dataloader_state:
-            getattr(self.train_dataloader, "load_state_dict", lambda _: None)(
-                dataloader_state["train"]
-            )
-            dataloader_state.pop("train")
-        if "val" in dataloader_state:
-            getattr(self.val_dataloader, "load_state_dict", lambda _: None)(
-                dataloader_state["val"]
-            )
-            dataloader_state.pop("val")
+        if resume_data:
+            if "train" in dataloader_state:
+                getattr(self.train_dataloader, "load_state_dict", lambda _: None)(
+                    dataloader_state["train"]
+                )
+                dataloader_state.pop("train")
+            if "val" in dataloader_state:
+                getattr(self.val_dataloader, "load_state_dict", lambda _: None)(
+                    dataloader_state["val"]
+                )
+                dataloader_state.pop("val")
+        else:
+            logger.info("Skipping dataloader state restoration (resume_data=False)")
+            dataloader_state.pop("train", None)
+            dataloader_state.pop("val", None)
 
         leftover_keys: dict[str, Any] = {}
         if models_state:
@@ -498,10 +508,7 @@ class BaseTrainer(EvalMetricMixin, Stateful):
             (self.local_batches + 1) % self._num_gradient_accumulation_steps
         ) == 0
 
-        should_perform_validation = (
-            (self.global_step + 1)
-            % int(self._num_train_batches * self.training_parameters.val_frequency)
-        ) == 0
+        should_perform_validation = ((self.global_step + 1) % self._steps_per_validation) == 0
 
         return not (
             completed_num_gradient_accumulation_steps
@@ -588,11 +595,12 @@ class BaseTrainer(EvalMetricMixin, Stateful):
                 )
 
             self.callbacks.post_train_step(result, batch_idx)
-            self.local_batches += 1
 
             if not self.is_accumulating_gradients:
                 self._local_step += 1
                 self.global_step += 1
+
+            self.local_batches += 1
             batch_idx += 1
 
             # Reduce timeout after first train step for faster signal
@@ -605,18 +613,11 @@ class BaseTrainer(EvalMetricMixin, Stateful):
                 )
 
             # Validation Epoch
-            if (
-                (self.global_step + 1)
-                % int(
-                    self._num_train_batches
-                    // self._num_gradient_accumulation_steps
-                    * self.training_parameters.val_frequency
-                )
-            ) == 0:
+            if (self.global_step + 1) % self._steps_per_validation == 0:
                 self.perform_validation_epoch()
                 self.train()
 
-        if (batch_idx + 1) < self._num_train_batches:
+        if batch_idx < self._num_train_batches:
             raise RuntimeError(
                 f"Worker {self.world.world_mesh.get_rank() if self.world.world_mesh is not None else 'unknown'} received fewer training batches than expected. "
                 f"Expected {self._num_train_batches} batches, received {batch_idx + 1}"
@@ -680,7 +681,7 @@ class BaseTrainer(EvalMetricMixin, Stateful):
             self.callbacks.post_validation_step(result, batch_idx)
             batch_idx += 1
 
-        if (batch_idx + 1) < self._num_val_steps:
+        if batch_idx < self._num_val_steps:
             raise RuntimeError(
                 f"Worker {self.world.world_mesh.get_rank() if self.world.world_mesh is not None else 'unknown'} received fewer validation batches than expected. "
                 f"Expected {self._num_val_steps} batches, received {batch_idx + 1}"
@@ -750,13 +751,13 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         """
         # Setup dataloader metadata
         (
-            self._train_batch_size,
+            self._global_batch_size,
             self._num_train_batches,  # num_train_steps_per_epoch
             self._num_gradient_accumulation_steps,
         ) = get_train_dataloader_steps(
             self.train_dataloader,
             self.training_parameters.train_steps_per_epoch,
-            self.training_parameters.train_batch_size,
+            self.training_parameters.gradient_accumulation_steps,
             self.world.dp_size,
         )
         self._num_val_steps, self._num_sanity_val_steps = get_val_dataloader_steps(
@@ -767,9 +768,7 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         )
 
         # Check global agreement for training parameters
-        assert dist_ops.global_agreement(self._train_batch_size), (
-            "`train_batch_size` must be the same across all ranks"
-        )
+        # Note: _global_batch_size varies with dp_size in elastic training, so no assertion needed
         assert dist_ops.global_agreement(self._num_train_batches), (
             "`num_train_steps` must be the same across all ranks"
         )
@@ -783,6 +782,15 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         )
         assert dist_ops.global_agreement(self._num_sanity_val_steps), (
             "`num_sanity_val_steps` must be the same across all ranks"
+        )
+
+        self._steps_per_validation = max(
+            int(
+                self._num_train_batches
+                // self._num_gradient_accumulation_steps
+                * self.training_parameters.val_frequency
+            ),
+            1,
         )
 
     def _fit(self):

@@ -163,9 +163,29 @@ class DistributedWorld:
         return dp_mesh.size() if dp_mesh is not None else 1
 
     @property
+    def tp_size(self) -> int:
+        tp_mesh = self.get_mesh("tp")
+        return tp_mesh.size() if tp_mesh is not None else 1
+
+    @property
     def dp_rank(self) -> int:
         dp_mesh = self.get_mesh("dp")
         return dp_mesh.get_local_rank() if dp_mesh is not None else 0
+
+    @property
+    def dp_replicate_rank(self) -> int:
+        dp_replicate_mesh = self.get_mesh("dp_replicate")
+        return dp_replicate_mesh.get_local_rank() if dp_replicate_mesh is not None else 0
+
+    @property
+    def dp_shard_rank(self) -> int:
+        dp_shard_mesh = self.get_mesh("dp_shard")
+        return dp_shard_mesh.get_local_rank() if dp_shard_mesh is not None else 0
+
+    @property
+    def tp_rank(self) -> int:
+        tp_mesh = self.get_mesh("tp")
+        return tp_mesh.get_local_rank() if tp_mesh is not None else 0
 
     @property
     def fsdp_config(self):

@@ -116,7 +116,10 @@ class ProgressBar(Callback[BaseTrainer]):
             leave=True,
             smoothing=self.smoothing,
         )
-        self.training_tqdm.update(self.trainer.global_step % self.trainer._num_train_batches)
+        self.training_tqdm.update(
+            self.trainer.global_step
+            % (self.trainer._num_train_batches // self.trainer._num_gradient_accumulation_steps)
+        )
         self.training_tqdm.refresh()
 
         self.validation_tqdm = factorized_tqdm(

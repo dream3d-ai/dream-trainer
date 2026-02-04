@@ -54,20 +54,19 @@ class CheckpointCallback(Callback[DreamTrainer]):
 
     @property
     def should_checkpoint(self) -> bool:
-        if self.config.checkpoint_every_n_epochs is not None:
+        if self.config.checkpoint_every_n_train_epochs is not None:
             return (
                 self.trainer.current_epoch > 0
-                and self.trainer.current_epoch % self.config.checkpoint_every_n_epochs == 0
+                and (self.trainer.current_epoch) % self.config.checkpoint_every_n_train_epochs
+                == 0
             )
 
-        if self.config.checkpoint_every_n_steps is not None:
-            return (
-                self.trainer.global_step > 0
-                and self.trainer.global_step % self.config.checkpoint_every_n_steps == 0
-            )
+        if self.config.checkpoint_every_n_val_epochs is not None:
+            val_epoch = (self.trainer.global_step + 1) // self.trainer._steps_per_validation
+            return val_epoch > 0 and val_epoch % self.config.checkpoint_every_n_val_epochs == 0
 
         raise ValueError(
-            "If checkpointing is enabled, one of checkpoint_every_n_epochs or checkpoint_every_n_steps must be set"
+            "One of checkpoint_every_n_train_epochs or checkpoint_every_n_val_epochs must be set"
         )
 
     # ##################
@@ -110,13 +109,26 @@ class CheckpointCallback(Callback[DreamTrainer]):
         logger.info(f"Resumed {self.trainer.experiment} from step {checkpoint.step}")
         self.trainer.world.barrier()
 
+    def _checkpoint_exists(self, checkpoint: Checkpoint):
+        save_path = self.root_dir / checkpoint.checkpoint_id
+        path_exists = torch.tensor([save_path.exists()])
+        dist.broadcast(path_exists, src=0, group=self.pg)
+        if path_exists:
+            if self.config.resume_mode == "last":
+                raise ValueError(
+                    f"Checkpoint {checkpoint.checkpoint_id} already exists, but resume_mode is 'last'. This should never happen."
+                )
+            else:
+                logger.warning(
+                    f"Checkpoint {checkpoint.checkpoint_id} already exists, skipping save."
+                )
+
+        return path_exists
+
     def _save(self, checkpoint: Checkpoint, state_dict: dict[str, Any]):
         save_path = self.root_dir / checkpoint.checkpoint_id
-        if save_path.exists():
-            raise FileExistsError(
-                f"Checkpoint path already exists: {save_path}. "
-                "Refusing to overwrite existing checkpoint."
-            )
+        if self._checkpoint_exists(checkpoint):
+            return
 
         logger.info(f"Saving checkpoint {checkpoint.checkpoint_id}")
         dcp.state_dict_saver.save(
@@ -134,7 +146,11 @@ class CheckpointCallback(Callback[DreamTrainer]):
 
         state_dict = self.trainer.state_dict()
         self._load(checkpoint, state_dict)
-        self.trainer.load_state_dict(state_dict, strict=self.config.strict_load)
+        self.trainer.load_state_dict(
+            state_dict,
+            strict=self.config.strict_load,
+            resume_data=self.config.resume_data,
+        )
 
         self._did_resume = True
         self._current_metric = None
@@ -205,10 +221,12 @@ class CheckpointCallback(Callback[DreamTrainer]):
     def post_validation_epoch(self, result: dict[str, Any]):
         self._report_metric(result)
 
+        if self.config.checkpoint_every_n_val_epochs is not None and self.should_checkpoint:
+            self.save()
+
     @override
     def pre_train_epoch(self):
-        # Checkpointing runs at the start of each epoch
-        if self.should_checkpoint:
+        if self.config.checkpoint_every_n_train_epochs is not None and self.should_checkpoint:
             self.save()
 
     def _cleanup_checkpoints(self):

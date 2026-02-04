@@ -13,7 +13,7 @@ from dream_trainer.utils import logger
 class TrainingParameters:
     n_epochs: int | None = None
     train_steps_per_epoch: int | None = None
-    train_batch_size: int = 1
+    gradient_accumulation_steps: int = 1
     val_steps_per_epoch: int | None = None
     val_frequency: float = 1.0
     num_sanity_val_steps: int = 0
