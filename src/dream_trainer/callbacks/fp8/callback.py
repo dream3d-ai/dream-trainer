@@ -52,18 +52,15 @@ class Fp8Quantization(Callback[QuantizeMixin]):
     @override
     def post_configure(self):
         quantize_filters = self.trainer.quantize_module_filters()
-        assert all(
-            module_name in quantize_filters for module_name in self.model_to_recipe.keys()
-        ), (
-            f"Not all modules in {self.model_to_recipe} have a quantize_filter. Missing: {set(self.model_to_recipe.keys()) - set(quantize_filters.keys())}"
-        )
-        assert all(
-            module_name in self.trainer.named_models().keys()
-            for module_name in self.model_to_recipe.keys()
-        ), (
-            f"Not all modules in {self.model_to_recipe} exist in {self.trainer.named_models().keys()}. "
-            f"Missing: {set(self.model_to_recipe.keys()) - set(self.trainer.named_models().keys())}"
-        )
+        missing = {
+            name: self.model_to_recipe.pop(name)
+            for name in list(self.model_to_recipe.keys())
+            if name not in self.trainer.named_models()
+        }
+        if missing:
+            logger.warning(
+                f"Modules {set(missing.keys())} are not in {set(self.trainer.named_models().keys())}. Skipping."
+            )
 
         for module_name, config in self.model_to_recipe.items():
             module = self.trainer.named_models()[module_name]

@@ -244,7 +244,7 @@ class OptimizerAndSchedulerSetupMixin(AbstractTrainer):
             >>> sched = trainer.get_scheduler_by_optimizer("optimizer")
             >>> sched.step()
         """
-        return self._optimizer_scheduler_map[name]
+        return getattr(self, self._optimizer_scheduler_map[name])
 
     ###################
     # Private Methods #
@@ -305,5 +305,12 @@ class OptimizerAndSchedulerSetupMixin(AbstractTrainer):
 
         self._configure_optimizers()
         self._configure_schedulers()
+
+        # Attach optimizer hooks to models (for optimizers that support it)
+        for optimizer_name, model_name in self._optimizer_model_map.items():
+            optimizer = getattr(self, optimizer_name)
+            if hasattr(optimizer, "attach_hooks"):
+                model = self.named_models()[model_name]
+                optimizer.attach_hooks(model)
 
         logger.info("Setup Optimizers and Schedulers")

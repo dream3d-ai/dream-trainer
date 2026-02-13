@@ -34,6 +34,7 @@ class CheckpointCallback(Callback[DreamTrainer]):
     # State
     _current_metric: Tensor | None
     _did_resume: bool
+    _last_saved_step: int | None
 
     def __init__(self, config: CheckpointParameters):
         self.config = config
@@ -62,7 +63,16 @@ class CheckpointCallback(Callback[DreamTrainer]):
             )
 
         if self.config.checkpoint_every_n_val_epochs is not None:
-            val_epoch = (self.trainer.global_step + 1) // self.trainer._steps_per_validation
+            # When val_every_n_steps is None, validation happens once per training epoch
+            if self.trainer.training_parameters.val_every_n_steps is None:
+                val_epoch = (
+                    self.trainer.current_epoch + 1
+                )  # +1 because we're in post_validation_epoch
+            else:
+                val_epoch = (
+                    self.trainer.global_step
+                    // self.trainer.training_parameters.val_every_n_steps
+                )
             return val_epoch > 0 and val_epoch % self.config.checkpoint_every_n_val_epochs == 0
 
         raise ValueError(
@@ -152,14 +162,16 @@ class CheckpointCallback(Callback[DreamTrainer]):
             resume_data=self.config.resume_data,
         )
 
-        self._did_resume = True
+        # Prevent re-saving the loaded checkpoint
+        self._last_saved_step = self.trainer.global_step
         self._current_metric = None
 
     @torch.no_grad()
     def save(self):
-        if self._did_resume:
-            self._did_resume = False
-            return  # Skip saving as we just loaded the checkpoint
+        # Skip saving if we're at the exact same step we resumed from
+        # (avoids re-saving a checkpoint we just loaded)
+        if self._last_saved_step == self.trainer.global_step:
+            return
 
         if self._current_metric is None:
             raise ValueError(f"{self.config.monitor} was not reported in the last epoch")
@@ -171,6 +183,7 @@ class CheckpointCallback(Callback[DreamTrainer]):
 
         gc.collect(generation=1)
         self._save(checkpoint, self.trainer.state_dict())
+        self._last_saved_step = self.trainer.global_step
         gc.collect(generation=1)
 
     # ################
@@ -192,6 +205,7 @@ class CheckpointCallback(Callback[DreamTrainer]):
         self.pg = dist.new_group(backend="gloo")
         self._did_resume = False
         self._current_metric = None
+        self._last_saved_step = None
 
     @override
     def pre_fit(self):
@@ -206,7 +220,13 @@ class CheckpointCallback(Callback[DreamTrainer]):
 
     @override
     def post_fit(self):
+        # Skip if no metric was reported (nothing to checkpoint)
         if self._current_metric is None:
+            return
+
+        # Skip if we already checkpointed at this step (e.g., from post_validation_epoch)
+        # This prevents duplicate checkpoint errors, especially with resume_mode="last"
+        if self._last_saved_step == self.trainer.global_step:
             return
 
         self.save()
@@ -220,6 +240,10 @@ class CheckpointCallback(Callback[DreamTrainer]):
     @override
     def post_validation_epoch(self, result: dict[str, Any]):
         self._report_metric(result)
+
+        # Skip checkpointing during sanity validation
+        if self.trainer.is_sanity_validation:
+            return
 
         if self.config.checkpoint_every_n_val_epochs is not None and self.should_checkpoint:
             self.save()

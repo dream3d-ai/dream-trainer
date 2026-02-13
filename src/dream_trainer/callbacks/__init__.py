@@ -1,3 +1,4 @@
+from .benchmark import BenchmarkCallback
 from .callback import Callback, CallbackCollection, RankZeroCallback
 from .checkpoint import (
     AsyncCheckpointCallback,
@@ -50,6 +51,7 @@ except ImportError:
 
 __all__ = [
     "AsyncCheckpointCallback",
+    "BenchmarkCallback",
     "Callback",
     "CallbackCollection",
     "CheckpointCallback",

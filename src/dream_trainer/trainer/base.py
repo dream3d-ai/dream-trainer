@@ -502,13 +502,16 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         # No longer accumulating gradients if any of the following is true:
         # - Completed num_gradient_accumulation_steps
         # - Is the last training batch in the epoch
-        # - Is about to perform validation
+        # - Is about to perform validation (NOTE: This causes variable effective batch size on final train step)
 
         completed_num_gradient_accumulation_steps = (
             (self.local_batches + 1) % self._num_gradient_accumulation_steps
         ) == 0
 
-        should_perform_validation = ((self.global_step + 1) % self._steps_per_validation) == 0
+        should_perform_validation = (
+            self.training_parameters.val_every_n_steps is not None
+            and (self.global_step + 1) % self.training_parameters.val_every_n_steps == 0
+        )
 
         return not (
             completed_num_gradient_accumulation_steps
@@ -600,6 +603,14 @@ class BaseTrainer(EvalMetricMixin, Stateful):
                 self._local_step += 1
                 self.global_step += 1
 
+                # Validation Epoch (only check after completing an optimization step)
+                if (
+                    self.training_parameters.val_every_n_steps is not None
+                    and self.global_step % self.training_parameters.val_every_n_steps == 0
+                ):
+                    self.perform_validation_epoch()
+                    self.train()
+
             self.local_batches += 1
             batch_idx += 1
 
@@ -612,16 +623,9 @@ class BaseTrainer(EvalMetricMixin, Stateful):
                     ),
                 )
 
-            # Validation Epoch
-            if (self.global_step + 1) % self._steps_per_validation == 0:
-                self.perform_validation_epoch()
-                self.train()
-
-        if batch_idx < self._num_train_batches:
-            raise RuntimeError(
-                f"Worker {self.world.world_mesh.get_rank() if self.world.world_mesh is not None else 'unknown'} received fewer training batches than expected. "
-                f"Expected {self._num_train_batches} batches, received {batch_idx + 1}"
-            )
+        # End-of-epoch validation when val_every_n_steps is None
+        if self.training_parameters.val_every_n_steps is None:
+            self.perform_validation_epoch()
 
         self.callbacks.post_train_epoch(result)
 
@@ -714,13 +718,9 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         It temporarily overrides the number of validation steps with the
         configured number of sanity validation steps.
 
-        Sanity validation is only performed on the first epoch (epoch 0)
-        and is skipped when resuming training from a checkpoint.
+        Sanity validation is skipped when resuming from a checkpoint
+        (i.e., when global_step > 0).
         """
-        # Don't perform sanity validation on resumption
-        if self.current_epoch > 0:
-            return
-
         logger.info(f"Performing {self._num_sanity_val_steps} sanity validation steps")
 
         # Store num val steps & temporarily override to num sanity val steps
@@ -770,7 +770,7 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         # Check global agreement for training parameters
         # Note: _global_batch_size varies with dp_size in elastic training, so no assertion needed
         assert dist_ops.global_agreement(self._num_train_batches), (
-            "`num_train_steps` must be the same across all ranks"
+            "`num_train_batches` must be the same across all ranks"
         )
         assert dist_ops.global_agreement(self._num_gradient_accumulation_steps), (
             "`num_gradient_accumulation_steps` must be the same across all ranks"
@@ -782,15 +782,6 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         )
         assert dist_ops.global_agreement(self._num_sanity_val_steps), (
             "`num_sanity_val_steps` must be the same across all ranks"
-        )
-
-        self._steps_per_validation = max(
-            int(
-                self._num_train_batches
-                // self._num_gradient_accumulation_steps
-                * self.training_parameters.val_frequency
-            ),
-            1,
         )
 
     def _fit(self):
@@ -835,7 +826,7 @@ class BaseTrainer(EvalMetricMixin, Stateful):
 
         # Fit Loop
         n_epochs = self.training_parameters.n_epochs
-        for _ in range(n_epochs) if n_epochs is not None else repeat(0):
+        for _ in range(self.current_epoch, n_epochs) if n_epochs is not None else repeat(0):
             self.callbacks.pre_epoch()
             self.perform_training_epoch()  # Validation handled in training epoch
             self.callbacks.post_epoch()

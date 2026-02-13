@@ -69,55 +69,56 @@ class OptimizeFSDP(Callback[DreamTrainer]):
         self.display = display
 
         # Track execution order per model (prefetching only valid within a model)
-        self.forward_stacks: dict[str, list[str]] = {}
-        self.backward_stacks: dict[str, list[str]] = {}
+        self.forward_stacks: dict[str, list[FSDPModule]] = {}
+        self.backward_stacks: dict[str, list[FSDPModule]] = {}
 
         # Track modules that haven't been called yet, per model
-        self.pending_forward_modules: dict[str, set[str]] = {}
-        self.pending_backward_modules: dict[str, set[str]] = {}
+        self.pending_forward_modules: dict[str, set[FSDPModule]] = {}
+        self.pending_backward_modules: dict[str, set[FSDPModule]] = {}
 
-        self.forward_hooks: list[RemovableHandle] = []
-        self.backward_hooks: list[RemovableHandle] = []
+        # Track hooks per model so we can remove them when the model is processed
+        self.forward_hooks: dict[str, list[RemovableHandle]] = {}
+        self.backward_hooks: dict[str, list[RemovableHandle]] = {}
 
-    def append_forward_call(self, model_name: str, fqn: str):
+    def append_forward_call(self, model_name: str, module: FSDPModule):
         """Create a hook function that records FSDP module execution order.
 
         This method returns a hook function that, when called, appends the module
-        name to the execution stack for its model. This is used to trace the order
+        to the execution stack for its model. This is used to trace the order
         in which FSDP modules are executed during forward pass.
 
         Args:
             model_name: Name of the top-level model this module belongs to.
-            fqn: Fully qualified name of the FSDP module.
+            module: The FSDP module being traced.
 
         Returns:
             Hook function that records module execution when called.
         """
 
         def hook(*args, **kwargs):
-            self.forward_stacks[model_name].append(fqn)
-            self.pending_forward_modules[model_name].discard(fqn)
+            self.forward_stacks[model_name].append(module)
+            self.pending_forward_modules[model_name].discard(module)
 
         return hook
 
-    def append_backward_call(self, model_name: str, fqn: str):
+    def append_backward_call(self, model_name: str, module: FSDPModule):
         """Create a hook function that records FSDP module execution order.
 
         This method returns a hook function that, when called, appends the module
-        name to the execution stack for its model. This is used to trace the order
+        to the execution stack for its model. This is used to trace the order
         in which FSDP modules are executed during backward pass.
 
         Args:
             model_name: Name of the top-level model this module belongs to.
-            fqn: Fully qualified name of the FSDP module.
+            module: The FSDP module being traced.
 
         Returns:
             Hook function that records module execution when called.
         """
 
         def hook(*args, **kwargs):
-            self.backward_stacks[model_name].append(fqn)
-            self.pending_backward_modules[model_name].discard(fqn)
+            self.backward_stacks[model_name].append(module)
+            self.pending_backward_modules[model_name].discard(module)
 
         return hook
 
@@ -148,49 +149,82 @@ class OptimizeFSDP(Callback[DreamTrainer]):
             self.backward_stacks[name] = []
             self.pending_forward_modules[name] = set()
             self.pending_backward_modules[name] = set()
+            self.forward_hooks[name] = []
+            self.backward_hooks[name] = []
 
-            for module_name, module in model.named_modules():
+            for _, module in model.named_modules():
                 if isinstance(module, FSDPModule):
                     module.set_allocate_memory_from_process_group_for_comm(
                         self.allocate_memory_from_process_group_for_comm
                     )
 
                     if self.prefetch > 1:
-                        module._set_unshard_async_op(True)
-
-                        module = cast(nn.Module, module)
-                        fqn = f"{name}.{module_name}" if module_name else name
-
-                        self.pending_forward_modules[name].add(fqn)
-                        self.forward_hooks.extend(
-                            [
-                                module.register_forward_pre_hook(
-                                    self.append_forward_call(name, fqn)
-                                ),
-                            ]
+                        self.pending_forward_modules[name].add(module)
+                        self.forward_hooks[name].append(
+                            cast(nn.Module, module).register_forward_pre_hook(
+                                self.append_forward_call(name, module)
+                            )
                         )
 
                         # Only register backward hooks on modules with trainable parameters
-                        if any(p.requires_grad for p in module.parameters()):
-                            self.pending_backward_modules[name].add(fqn)
-                            self.backward_hooks.extend(
-                                [
-                                    module.register_full_backward_pre_hook(
-                                        self.append_backward_call(name, fqn)
-                                    ),
-                                ]
+                        if any(p.requires_grad for p in cast(nn.Module, module).parameters()):
+                            self.pending_backward_modules[name].add(module)
+                            self.backward_hooks[name].append(
+                                cast(nn.Module, module).register_full_backward_pre_hook(
+                                    self.append_backward_call(name, module)
+                                )
                             )
+        total_forward_hooks = sum(len(hooks) for hooks in self.forward_hooks.values())
+        total_backward_hooks = sum(len(hooks) for hooks in self.backward_hooks.values())
         logger.info(
-            f"Found {len(self.forward_hooks)} forward and {len(self.backward_hooks)} backward calls for FSDP modules"
+            f"Found {total_forward_hooks} forward and {total_backward_hooks} backward calls for FSDP modules"
         )
+
+    def _get_root_fsdp_modules(self, model: nn.Module) -> list[FSDPModule]:
+        """Get root-level FSDPModules in a model.
+
+        Finds FSDPModules that are not nested inside another FSDPModule.
+        For a model that IS an FSDPModule, returns just that module.
+        For a wrapper nn.Module containing FSDPModules, returns the top-level
+        FSDPModules that aren't children of other FSDPModules.
+
+        Args:
+            model: The model to search for FSDPModules.
+
+        Returns:
+            List of root-level FSDPModules found in the model.
+        """
+        if isinstance(model, FSDPModule):
+            return [model]
+
+        # Collect all FSDPModules with their paths
+        fsdp_modules: dict[str, FSDPModule] = {}
+        for name, module in model.named_modules():
+            if isinstance(module, FSDPModule):
+                fsdp_modules[name] = module
+
+        # Filter to only root FSDPModules (not nested under another FSDP)
+        root_modules = []
+        for name, module in fsdp_modules.items():
+            is_nested = any(
+                name.startswith(other_name + ".")
+                for other_name in fsdp_modules
+                if other_name != name
+            )
+            if not is_nested:
+                root_modules.append(module)
+
+        return root_modules
 
     @override
     def pre_train_step(self, *_):
         """Unshard FSDP models asynchronously before training step.
 
         This method is called before each training step. It triggers asynchronous unsharding of
-        the first all-gather of all FSDP model, allowing the unsharding operation to overlap
+        the first all-gather of all FSDP models, allowing the unsharding operation to overlap
         with other computations and reducing the time spent waiting for data movement.
+
+        Supports both direct FSDPModules and wrapper nn.Modules containing FSDPModules.
 
         Args:
             *_: Unused arguments from the trainer callback interface.
@@ -199,16 +233,18 @@ class OptimizeFSDP(Callback[DreamTrainer]):
             return
 
         for _, model in self.trainer.named_models().items():
-            if isinstance(model, FSDPModule):
-                model.unshard(async_op=True)
+            for fsdp_module in self._get_root_fsdp_modules(model):
+                fsdp_module.unshard(async_op=True)
 
     @override
     def pre_validation_step(self, *_):
         """Unshard FSDP models asynchronously before validation step.
 
         This method is called before each validation step. It triggers asynchronous unsharding of
-        the first all-gather of all FSDP model, allowing the unsharding operation to overlap
+        the first all-gather of all FSDP models, allowing the unsharding operation to overlap
         with other computations and reducing the time spent waiting for data movement.
+
+        Supports both direct FSDPModules and wrapper nn.Modules containing FSDPModules.
 
         Args:
             *_: Unused arguments from the trainer callback interface.
@@ -217,8 +253,8 @@ class OptimizeFSDP(Callback[DreamTrainer]):
             return
 
         for _, model in self.trainer.named_models().items():
-            if isinstance(model, FSDPModule):
-                model.unshard(async_op=True)
+            for fsdp_module in self._get_root_fsdp_modules(model):
+                fsdp_module.unshard(async_op=True)
 
     def _setup_prefetch_for_model(self, model_name: str):
         """Set up prefetching for a single model that has completed tracing.
@@ -226,10 +262,10 @@ class OptimizeFSDP(Callback[DreamTrainer]):
         Args:
             model_name: Name of the model to set up prefetching for.
         """
-        forward_stack = self.forward_stacks[model_name]
-        backward_stack = self.backward_stacks[model_name]
+        ordered_forward_modules = self.forward_stacks[model_name]
+        ordered_backward_modules = self.backward_stacks[model_name]
 
-        if not forward_stack:
+        if not ordered_forward_modules:
             return
 
         prefetch_mode = (
@@ -239,18 +275,8 @@ class OptimizeFSDP(Callback[DreamTrainer]):
         )
         logger.info(
             f"Setting up {prefetch_mode} prefetch for model '{model_name}': "
-            f"{len(forward_stack)} forward calls and {len(backward_stack)} backward calls "
+            f"{len(ordered_forward_modules)} forward calls and {len(ordered_backward_modules)} backward calls "
             f"with prefetch factor {self.prefetch}"
-        )
-
-        # Get the modules in order of execution
-        ordered_forward_modules = cast(
-            list[FSDPModule],
-            [self.trainer.get_module(fqn) for fqn in forward_stack],
-        )
-        ordered_backwards_modules = cast(
-            list[FSDPModule],
-            [self.trainer.get_module(fqn) for fqn in backward_stack],
         )
 
         # Set up prefetching without overlap:
@@ -266,14 +292,14 @@ class OptimizeFSDP(Callback[DreamTrainer]):
                     ordered_forward_modules[i + self.prefetch : i + self.prefetch + 1]
                 )
 
-        for i, module in enumerate(ordered_backwards_modules):
+        for i, module in enumerate(ordered_backward_modules):
             if i == 0:
                 module.set_modules_to_backward_prefetch(
-                    ordered_backwards_modules[1 : 1 + self.prefetch]
+                    ordered_backward_modules[1 : 1 + self.prefetch]
                 )
             else:
                 module.set_modules_to_backward_prefetch(
-                    ordered_backwards_modules[i + self.prefetch : i + self.prefetch + 1]
+                    ordered_backward_modules[i + self.prefetch : i + self.prefetch + 1]
                 )
 
     @override
@@ -307,6 +333,12 @@ class OptimizeFSDP(Callback[DreamTrainer]):
         for model_name in ready_models:
             self._setup_prefetch_for_model(model_name)
 
+            # Clean up this model's hooks first (important: do this before deleting stacks)
+            for hook in self.forward_hooks.pop(model_name, []):
+                hook.remove()
+            for hook in self.backward_hooks.pop(model_name, []):
+                hook.remove()
+
             # Clean up this model's tracking data
             del self.forward_stacks[model_name]
             del self.backward_stacks[model_name]
@@ -322,13 +354,15 @@ class OptimizeFSDP(Callback[DreamTrainer]):
             logger.debug(f"Waiting for FSDP modules: {', '.join(pending_info)}")
             return
 
-        # All models have been processed, clean up hooks and remove callback
-        for hook in self.forward_hooks:
-            hook.remove()
+        # All models have been processed, clean up any remaining hooks and remove callback
+        for hooks in self.forward_hooks.values():
+            for hook in hooks:
+                hook.remove()
         self.forward_hooks.clear()
 
-        for hook in self.backward_hooks:
-            hook.remove()
+        for hooks in self.backward_hooks.values():
+            for hook in hooks:
+                hook.remove()
         self.backward_hooks.clear()
 
         self.pop_self()

@@ -15,7 +15,7 @@ class TrainingParameters:
     train_steps_per_epoch: int | None = None
     gradient_accumulation_steps: int = 1
     val_steps_per_epoch: int | None = None
-    val_frequency: float = 1.0
+    val_every_n_steps: int | None = None
     num_sanity_val_steps: int = 0
     gradient_clip_val: float | None = None
 

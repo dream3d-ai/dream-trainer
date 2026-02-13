@@ -59,7 +59,6 @@ class WandBLoggerMixin(LoggerMixin):
             project=self.project,
             group=self.group,
             name=self.experiment,
-            id=self.experiment,  # id == name for resumption
             resume="allow",
             mode="online"
             if (self.logging_parameters.enabled and self.world.is_global_zero)
