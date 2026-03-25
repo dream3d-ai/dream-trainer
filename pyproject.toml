@@ -28,9 +28,6 @@ metrics = [
 torchao = [
     "torchao",
 ]
-torchft = [
-    "torchft",
-]
 
 [dependency-groups]
 dev = [
@@ -54,7 +51,6 @@ lint.dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 lint.ignore = ["F722", "E731", "F821", "E741"]
 
 [tool.uv.sources]
-torchft = { git = "https://github.com/pytorch/torchft.git" }
 dist-util = { workspace = true }
 
 [tool.uv.extra-build-dependencies]

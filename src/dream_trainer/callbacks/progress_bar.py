@@ -31,6 +31,7 @@ class factorized_tqdm(tqdm):
     def __init__(self, *args, **kwargs):
         self._serve_time_ema = 0.0
         self._loop_time_ema = 0.0
+        self.smoothing = kwargs.get("smoothing", 0.3)
 
         self._start_time: float
         self._end_time: float

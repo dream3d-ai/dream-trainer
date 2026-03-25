@@ -6,6 +6,8 @@ from typing import Callable, Iterable, cast
 
 import dist_util
 import torch
+import torch._functorch
+import torch._functorch.config
 import torch._inductor.config
 import torch.distributed
 import torch.distributed as dist
@@ -242,6 +244,9 @@ class DistributedWorld:
             - Sets self.world_mesh to the constructed mesh.
         """
         os.environ["TORCH_FR_BUFFER_SIZE"] = str(self.config.comm.trace_buf_size)
+
+        # Activation checkpointing memory budget
+        torch._functorch.config.activation_memory_budget = self.config.activation_memory_budget
 
         # Set device-specific backends
         device_backend = c10d.Backend.default_device_backend_map.get(self.device_type)

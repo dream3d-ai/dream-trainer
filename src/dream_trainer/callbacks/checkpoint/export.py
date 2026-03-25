@@ -32,22 +32,33 @@ class ExportCallback(LoadPartialCheckpointCallback):
         self.overwrite = overwrite
         self.output_path.mkdir(parents=True, exist_ok=True)
 
+    def _resolve_export_targets(self) -> list[tuple[str, Module]]:
+        """Resolve submodule paths (e.g. 'pipe.model') to (name, Module) pairs."""
+        if self.submodules:
+            targets = []
+            for fqn in self.submodules:
+                model = self.trainer.get_module(fqn)
+                if not isinstance(model, Module):
+                    logger.warning(
+                        f"Exporting only supports DreamTrainer Modules. Skipping {fqn}"
+                    )
+                    continue
+                targets.append((fqn, model))
+            return targets
+
+        return [
+            (name, model)
+            for name, model in self.trainer.named_models().items()
+            if isinstance(model, Module)
+            and not (self.exclude_submodules and name in self.exclude_submodules)
+        ]
+
     def pre_fit(self):
         super().pre_fit()
 
-        with tqdm(self.trainer.named_models().items(), desc="Exporting models") as pbar:
+        targets = self._resolve_export_targets()
+        with tqdm(targets, desc="Exporting models") as pbar:
             for name, model in pbar:
-                if not isinstance(model, Module):
-                    logger.warning(
-                        f"Exporting only supports DreamTrainer Modules. Skipping {name}"
-                    )
-                    continue
-
-                if self.submodules and name not in self.submodules:
-                    continue
-                elif self.exclude_submodules and name in self.exclude_submodules:
-                    continue
-
                 pbar.set_description(f"Exporting {name} to {self.output_path}")
 
                 model.config.save_pretrained(

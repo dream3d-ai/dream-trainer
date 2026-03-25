@@ -63,6 +63,32 @@ def get_train_dataloader_steps(
             "to correctly compute the global batch size."
         )
 
+    if dataloader_length is not None and dataloader_length == 0:
+        msg = f"Training dataloader yielded 0 batches (batch_size={dataloader_batch_size})."
+        dataset = getattr(dataloader, "dataset", None)
+        if (
+            dataset is not None
+            and hasattr(dataset, "config")
+            and hasattr(dataset.config, "remote")
+        ):
+            total_rows = dataset.dataset.count_rows(dataset.filter)
+            msg += (
+                f"\n  Lance dataset: {dataset.config.remote}"
+                f"\n  Filter: {dataset.filter!r}"
+                f"\n  Rows matching filter: {total_rows}"
+                f"\n  Batch size: {dataloader_batch_size}"
+                f"\n  DP world size: {dataset._dp_world_size}"
+                f"\n  Num workers: {dataset._num_workers or 1}"
+            )
+            if total_rows == 0:
+                msg += "\n  -> No rows match your filter. Check your dataset path and filter."
+            else:
+                per_worker_rows = (
+                    total_rows // dataset._dp_world_size // (dataset._num_workers or 1)
+                )
+                msg += f"\n  Rows per worker: {per_worker_rows} (need >= {dataloader_batch_size} for 1 batch)"
+        raise ValueError(msg)
+
     global_batch_size: int = dataloader_batch_size * dp_size * gradient_accumulation_steps
 
     # _num_train_batches is the number of dataloader batches per epoch

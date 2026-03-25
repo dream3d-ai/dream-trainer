@@ -60,6 +60,11 @@ class EMACallback(Callback[DreamTrainer]):
                 use_buffers=False,
                 device=torch.device("cpu") if self.cpu_offload else None,
             )
+            # AveragedModel copies params on first update_parameters call
+            # (n_averaged 0→1) instead of EMA blending.  For EMA we want to
+            # blend from the very first step, so pre-set n_averaged to 1.
+            ema_model.n_averaged.fill_(1)
+
             self.ema_models[model_name] = ema_model
 
             logger.info(f"Created EMA model for '{model_name}' with decay={self.decay}")

@@ -1,5 +1,6 @@
 import warnings
 
+import torch.nn as nn
 from torch.distributed.fsdp import FSDPModule
 from torchao.float8 import convert_to_float8_training, precompute_float8_dynamic_scale_for_fsdp
 from torchao.quantization import Float8DynamicActivationFloat8WeightConfig
@@ -11,7 +12,7 @@ from dream_trainer.utils import logger
 from dream_trainer.utils.common import is_sm89_or_later
 
 from ..callback import Callback
-from .types import Fp8QuantizeConfig
+from .types import AutoFilterForTensorwise, Fp8QuantizeConfig
 from .utils import _quantize_for_inference
 
 
@@ -21,6 +22,48 @@ class Fp8Quantization(Callback[QuantizeMixin]):
             model_name: Fp8QuantizeConfig(recipe) if isinstance(recipe, str) else recipe
             for model_name, recipe in model_to_recipe.items()
         }
+
+    ###########
+    # Helpers #
+    ###########
+
+    def _resolve_module(self, name: str) -> nn.Module:
+        """Resolve a possibly-dotted module path (e.g. 'pipe.text_encoder')."""
+        parts = name.split(".")
+        module = self.trainer.named_models()[parts[0]]
+        for part in parts[1:]:
+            module = getattr(module, part)
+        return module
+
+    def _set_module(self, name: str, module: nn.Module):
+        """Set a module at a possibly-dotted path."""
+        parts = name.split(".")
+        if len(parts) == 1:
+            setattr(self.trainer, name, module)
+        else:
+            parent = self._resolve_module(".".join(parts[:-1]))
+            setattr(parent, parts[-1], module)
+
+    def _module_exists(self, name: str) -> bool:
+        try:
+            self._resolve_module(name)
+            return True
+        except (KeyError, AttributeError):
+            return False
+
+    def _get_quantize_filters(self):
+        if hasattr(self.trainer, "quantize_module_filters"):
+            return self.trainer.quantize_module_filters()
+        return {}
+
+    def _lookup_filter(self, quantize_filters, name):
+        """Look up user-defined filter, falling back to the root model name."""
+        if name in quantize_filters:
+            return quantize_filters[name]
+        root = name.split(".")[0]
+        if root in quantize_filters:
+            return quantize_filters[root]
+        return None
 
     #############
     # Callbacks #
@@ -38,6 +81,9 @@ class Fp8Quantization(Callback[QuantizeMixin]):
 
         self.trainer.device_parameters.async_tensor_parallel = compile_model
 
+        if not hasattr(self.trainer, "_quantized_models"):
+            self.trainer._quantized_models = []
+
         # Suppress warnings about the 'use_reentrant' parameter in torch.utils.checkpoint.
         warnings.filterwarnings(
             "ignore",
@@ -51,29 +97,27 @@ class Fp8Quantization(Callback[QuantizeMixin]):
 
     @override
     def post_configure(self):
-        quantize_filters = self.trainer.quantize_module_filters()
+        quantize_filters = self._get_quantize_filters()
         missing = {
             name: self.model_to_recipe.pop(name)
             for name in list(self.model_to_recipe.keys())
-            if name not in self.trainer.named_models()
+            if not self._module_exists(name)
         }
         if missing:
-            logger.warning(
-                f"Modules {set(missing.keys())} are not in {set(self.trainer.named_models().keys())}. Skipping."
-            )
+            logger.warning(f"Modules {set(missing.keys())} could not be resolved. Skipping.")
 
         for module_name, config in self.model_to_recipe.items():
-            module = self.trainer.named_models()[module_name]
+            module = self._resolve_module(module_name)
             if config.recipe != "inference":
                 # These need to be applied after the model is materialized
                 continue
             else:
                 config, default_filter = config.to_config(isinstance(module, FSDPModule))
 
-            quantize_filter = quantize_filters[module_name] + default_filter
+            user_filter = self._lookup_filter(quantize_filters, module_name)
+            quantize_filter = (user_filter + default_filter) if user_filter else default_filter
 
-            setattr(
-                self.trainer,
+            self._set_module(
                 module_name,
                 convert_to_float8_training(
                     module,
@@ -93,10 +137,15 @@ class Fp8Quantization(Callback[QuantizeMixin]):
         """
         # Setup optimizer hooks for quantized training models
         for module_name, config in self.model_to_recipe.items():
-            model = self.trainer.named_models()[module_name]
+            model = self._resolve_module(module_name)
 
             if module_name in self.trainer._quantized_models and config.recipe == "tensorwise":
-                optimizers = self.trainer.get_optimizers_by_model(module_name)
+                root_name = module_name.split(".")[0]
+                try:
+                    optimizers = self.trainer.get_optimizers_by_model(root_name)
+                except ValueError:
+                    optimizers = []
+
                 if len(optimizers) == 0:
                     logger.warning(
                         f"{module_name} is quantized for training but has no optimizers. Skipping optimizer hook setup."
@@ -109,19 +158,23 @@ class Fp8Quantization(Callback[QuantizeMixin]):
                     )
 
         # Quantize inference models
-        quantize_filters = self.trainer.quantize_module_filters()
+        quantize_filters = self._get_quantize_filters()
         config = Float8DynamicActivationFloat8WeightConfig()
         handler = _QUANTIZE_CONFIG_HANDLER[type(config)]  # type: ignore
 
         for module_name, recipe in self.model_to_recipe.items():
-            if recipe == "inference":
-                module = self.trainer.named_models()[module_name]
+            if recipe.recipe == "inference":
+                module = self._resolve_module(module_name)
+                user_filter = self._lookup_filter(quantize_filters, module_name)
+                filter_fn = (
+                    user_filter if user_filter is not None else AutoFilterForTensorwise()
+                )
                 _quantize_for_inference(
                     module,
                     handler,
-                    filter_fn=quantize_filters[module_name],
+                    filter_fn=filter_fn,
                     extra_args=(config,),
                 )
-                quantize_filters[module_name].validate()
+                filter_fn.validate()
                 self.trainer._quantized_models.append(module_name)
                 logger.info(f"Quantized model {module_name} for inference")

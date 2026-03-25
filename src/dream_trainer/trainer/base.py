@@ -176,7 +176,7 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         models_state = state_dict.pop("models", {})
         for name, model in self.named_models().items():
             if name in models_state:
-                set_model_state_dict(model, models_state[name])
+                self.load_model_state_dict(name, model, models_state[name])
                 models_state.pop(name)
 
         # Load Optimizer State
@@ -257,6 +257,17 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         """
         return batch
 
+    def load_model_state_dict(
+        self, name: str, model: nn.Module, state_dict: dict[str, Any]
+    ) -> None:
+        """
+        Load a model's state dict during checkpoint restoration.
+
+        Override this method to customize how model state is restored,
+        e.g. to use non-strict loading for partial checkpoints.
+        """
+        set_model_state_dict(model, state_dict)
+
     @abstractmethod
     def model_state_dict(
         self, *, ignore_frozen_params: bool = False, flatten_optimizer_state_dict: bool = False
@@ -290,6 +301,18 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         Called at the start of each validation step.
         """
         return batch
+
+    def post_validation_epoch(self, result: dict[str, Any]) -> dict[str, Any]:
+        """
+        Called at the end of each validation epoch.
+        """
+        return result
+
+    def post_fit(self):
+        """
+        Called at the end of the training pipeline.
+        """
+        pass
 
     @abstractmethod
     def validation_step(self, batch: dict[str, Any], batch_idx: int) -> dict[str, Any]:
@@ -494,30 +517,12 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         Returns True if the current step is a gradient accumulation step
         (i.e., gradients are being updated but no optimizer step is being taken).
         Returns False if this is the step where accumulated gradients
-        will be applied, or if we're on the last training batch.
+        will be applied.
 
         Returns:
             bool: True if accumulating gradients, False if applying them.
         """
-        # No longer accumulating gradients if any of the following is true:
-        # - Completed num_gradient_accumulation_steps
-        # - Is the last training batch in the epoch
-        # - Is about to perform validation (NOTE: This causes variable effective batch size on final train step)
-
-        completed_num_gradient_accumulation_steps = (
-            (self.local_batches + 1) % self._num_gradient_accumulation_steps
-        ) == 0
-
-        should_perform_validation = (
-            self.training_parameters.val_every_n_steps is not None
-            and (self.global_step + 1) % self.training_parameters.val_every_n_steps == 0
-        )
-
-        return not (
-            completed_num_gradient_accumulation_steps
-            or self._is_last_training_batch
-            or should_perform_validation
-        )
+        return ((self.local_batches + 1) % self._num_gradient_accumulation_steps) != 0
 
     @property
     def num_gradient_accumulation_steps(self) -> int:
@@ -576,8 +581,6 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         for batch in self.train_dataloader:
             if batch_idx >= self._num_train_batches:
                 break
-
-            self._is_last_training_batch = batch_idx == self._num_train_batches - 1
 
             # Move batch to device, non-blocking
             batch = apply_to_collection(
@@ -686,7 +689,7 @@ class BaseTrainer(EvalMetricMixin, Stateful):
             batch_idx += 1
 
         if batch_idx < self._num_val_steps:
-            raise RuntimeError(
+            logger.warning(
                 f"Worker {self.world.world_mesh.get_rank() if self.world.world_mesh is not None else 'unknown'} received fewer validation batches than expected. "
                 f"Expected {self._num_val_steps} batches, received {batch_idx + 1}"
             )
@@ -706,6 +709,7 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         result = {**result, **metric_dict}
 
         # Validation Epoch End
+        result = self.post_validation_epoch(result)
         self.callbacks.post_validation_epoch(result)
         self.world.barrier()
 
@@ -835,3 +839,5 @@ class BaseTrainer(EvalMetricMixin, Stateful):
 
         # Fit End
         self.callbacks.post_fit()
+        self.post_fit()
+        self.world.barrier()

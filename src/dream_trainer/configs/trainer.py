@@ -49,6 +49,7 @@ class DeviceParameters:
     compile_model: bool = True
     async_tensor_parallel: bool = True
     loss_parallel: bool = False
+    activation_memory_budget: float = 1.0
 
     ## Communication
     comm: Comm = field(default_factory=Comm)
@@ -120,6 +121,7 @@ class DeviceParameters:
         cpu_offload: bool = False,
         checkpoint_activations: bool = False,
         compiled_autograd: bool = False,
+        activation_memory_budget: float = 1.0,
     ) -> "DeviceParameters":
         """
         Hybrid Sharding Parallelism
@@ -141,6 +143,7 @@ class DeviceParameters:
             _context_parallel=1,
             _pipeline_parallel=1,
             compiled_autograd=compiled_autograd,
+            activation_memory_budget=activation_memory_budget,
         )
 
     @classmethod
@@ -153,6 +156,7 @@ class DeviceParameters:
         checkpoint_activations: bool = False,
         compiled_autograd: bool = False,
         async_tensor_parallel=True,
+        activation_memory_budget: float = 1.0,
     ) -> "DeviceParameters":
         """
         TP within nodes
@@ -195,6 +199,7 @@ class DeviceParameters:
             _pipeline_parallel=1,
             compiled_autograd=compiled_autograd,
             async_tensor_parallel=async_tensor_parallel,
+            activation_memory_budget=activation_memory_budget,
         )
 
     @classmethod
@@ -204,6 +209,7 @@ class DeviceParameters:
         checkpoint_activations: bool = False,
         compile_model: bool = True,
         compiled_autograd: bool = False,
+        activation_memory_budget: float = 1.0,
     ) -> "DeviceParameters":
         return cls(
             cpu_offload=cpu_offload,
@@ -215,6 +221,7 @@ class DeviceParameters:
             _context_parallel=1,
             _pipeline_parallel=1,
             compiled_autograd=compiled_autograd,
+            activation_memory_budget=activation_memory_budget,
         )
 
     @classmethod
@@ -223,6 +230,7 @@ class DeviceParameters:
         compile_model: bool = True,
         cpu_offload: bool = False,
         checkpoint_activations: bool = False,
+        activation_memory_budget: float = 1.0,
     ) -> "DeviceParameters":
         return cls(
             compile_model=compile_model,
@@ -234,6 +242,7 @@ class DeviceParameters:
             _context_parallel=1,
             _pipeline_parallel=1,
             async_tensor_parallel=False,
+            activation_memory_budget=activation_memory_budget,
         )
 
     def validate(self):

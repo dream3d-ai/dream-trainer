@@ -125,12 +125,13 @@ class MediaLoggerCallback(RankZeroCallback[LoggerMixin]):
 
         if image_samples:
             images, image_captions = zip(*image_samples)
-            self.trainer.log_images(images, image_captions)
+            self.trainer.log_images(images, image_captions, desc="images")
         if video_samples:
             videos, video_captions = zip(*video_samples)
-            self.trainer.log_videos(videos, video_captions)
+            self.trainer.log_videos(videos, video_captions, desc="videos")
 
         self._logged_this_epoch = True
+        self._samples.clear()
 
     @override
     def post_validation_epoch(self, *_):

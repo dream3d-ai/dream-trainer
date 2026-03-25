@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Literal, override
+from typing import Literal, cast, override
 
 import torch.distributed as dist
 import torch.distributed.checkpoint as dcp
@@ -20,13 +20,15 @@ class LoadPartialCheckpointCallback(Callback[DreamTrainer]):
     useful for e.g. fine-tuning a model from a checkpoint.
     """
 
-    def __init__(self, path: str | Path, resume_mode: Literal["min", "max", "last"] | int = "last"):
+    def __init__(
+        self, path: str | Path, resume_mode: Literal["min", "max", "last"] | int = "last"
+    ):
         self.path = Path(path)
         self.resume_mode: Literal["min", "max", "last"] | int = resume_mode
 
     @override
     def post_setup(self):
-        self.pg = dist.new_group(backend="gloo")
+        self.pg = cast(dist.ProcessGroup, dist.new_group(backend="gloo"))
 
     @override
     def pre_fit(self):
@@ -55,7 +57,7 @@ class LoadPartialCheckpointCallback(Callback[DreamTrainer]):
             state_dict,
             checkpoint_id=str(self.path / checkpoint.checkpoint_id),
             process_group=self.pg,
-            planner=dcp.DefaultLoadPlanner(allow_partial_load=True),
+            planner=dcp.default_planner.DefaultLoadPlanner(allow_partial_load=True),
         )
         self.trainer.load_state_dict(state_dict, strict=False)
 

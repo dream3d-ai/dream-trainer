@@ -18,48 +18,46 @@ except ImportError as e:
     ) from e
 
 
-def summarize_models(named_models: dict[str, nn.Module], title: str = "Model Summary"):
+def summarize_models(
+    named_models: dict[str, nn.Module], title: str = "Model Summary", depth: int = 1
+):
     num_params = lambda module: sum(p.numel() for p in module.parameters())
     trainable = lambda module: sum(p.numel() for p in module.parameters() if p.requires_grad)
     size = lambda module: sum(p.element_size() * p.numel() for p in module.parameters())
+    fmt_params = lambda x: tqdm.format_sizeof(x).replace("G", "B")
+    fmt_size = lambda x: tqdm.format_sizeof(x, "B", 1024)
 
-    summary_data = [
-        (name, type(module).__name__, num_params(module), trainable(module), size(module))
-        for name, module in named_models.items()
-    ]
+    def collect_rows(name: str, module: nn.Module, current_depth: int):
+        rows = [
+            (name, type(module).__name__, num_params(module), trainable(module), size(module))
+        ]
+        if current_depth < depth:
+            for child_name, child in module.named_children():
+                rows.extend(collect_rows(f"{name}.{child_name}", child, current_depth + 1))
+        return rows
 
-    summary_data = list(zip(*summary_data))
+    rows: list[tuple[str, str, int, int, int]] = []
+    for name, module in named_models.items():
+        rows.extend(collect_rows(name, module, 1))
 
-    total_params = sum(summary_data[2])
-    total_trainable_params = sum(summary_data[3])
-    total_size = sum(summary_data[4])
-    non_trainable_params = total_params - total_trainable_params
-
-    summary_data[2] = tuple(
-        map(lambda x: tqdm.format_sizeof(x).replace("G", "B"), summary_data[2])
-    )
-    summary_data[3] = tuple(
-        map(lambda x: tqdm.format_sizeof(x).replace("G", "B"), summary_data[3])
-    )
-    summary_data[4] = tuple(map(lambda x: tqdm.format_sizeof(x, "B", 1024), summary_data[4]))
-
-    summary_data = list(
-        zip(("Name", "Type", "Params", "Trainable Params", "Size"), summary_data)
-    )
+    total_params = sum(num_params(m) for m in named_models.values())
+    total_trainable = sum(trainable(m) for m in named_models.values())
+    total_size = sum(size(m) for m in named_models.values())
+    non_trainable = total_params - total_trainable
 
     table = Table(title=title)
     console = Console()
-    for column in summary_data:
-        table.add_column(column[0], justify="right", no_wrap=True)
+    for col in ("Name", "Type", "Params", "Trainable Params", "Size"):
+        table.add_column(col, justify="right", no_wrap=True)
 
-    for row in zip(*[column[1] for column in summary_data]):
-        table.add_row(*row)
+    for name, type_name, p, tp, sz in rows:
+        table.add_row(name, type_name, fmt_params(p), fmt_params(tp), fmt_size(sz))
 
     console.print()
     console.print(table)
-    console.print(f"Trainable Parameters: {tqdm.format_sizeof(total_trainable_params)}")
-    if non_trainable_params > 0:
-        console.print(f"Non-Trainable Parameters: {tqdm.format_sizeof(non_trainable_params)}")
+    console.print(f"Trainable Parameters: {tqdm.format_sizeof(total_trainable)}")
+    if non_trainable > 0:
+        console.print(f"Non-Trainable Parameters: {tqdm.format_sizeof(non_trainable)}")
     console.print(f"Total Parameters: {tqdm.format_sizeof(total_params)}")
     console.print(f"Total Size: {tqdm.format_sizeof(total_size, 'B', 1024)}")
     console.print()
@@ -121,14 +119,18 @@ def summarize_dataloaders(
     console.print()
 
 
-def summarize(trainer: AbstractTrainer):
-    summarize_models(trainer.named_models(), title="Model Summary")
+def summarize(trainer: AbstractTrainer, depth: int = 1):
+    summarize_models(trainer.named_models(), title="Model Summary", depth=depth)
     summarize_dataloaders(
         trainer.train_dataloader, trainer.val_dataloader, title="Dataloader Summary"
     )
 
 
 class TrainerSummary(Callback):
+    def __init__(self, depth: int = 1):
+        super().__init__()
+        self.depth = depth
+
     @override
     def pre_fit(self):
-        summarize(self.trainer)
+        summarize(self.trainer, depth=self.depth)
