@@ -6,10 +6,8 @@ from dataclasses import dataclass
 from itertools import repeat
 from typing import TYPE_CHECKING, Any, Iterable, cast
 
-import dist_util.ops as dist_ops
 import torch
 import torch.nn as nn
-from dist_util.ops import apply_to_collection
 from torch.distributed._composable.replicate import DDP as DDPModule
 from torch.distributed.checkpoint.state_dict import (
     get_optimizer_state_dict,
@@ -22,6 +20,8 @@ from torch.optim.optimizer import Optimizer
 from typing_extensions import override
 
 from dream_trainer.configs.trainer import TrainingParameters
+from dream_trainer.dist.ops import global_agreement
+from dream_trainer.dist.utils import apply_to_collection
 from dream_trainer.utils import logger
 from dream_trainer.utils.common import seed_everything, stacked_context
 from dream_trainer.utils.dataloader import (
@@ -773,18 +773,18 @@ class BaseTrainer(EvalMetricMixin, Stateful):
 
         # Check global agreement for training parameters
         # Note: _global_batch_size varies with dp_size in elastic training, so no assertion needed
-        assert dist_ops.global_agreement(self._num_train_batches), (
+        assert global_agreement(self._num_train_batches), (
             "`num_train_batches` must be the same across all ranks"
         )
-        assert dist_ops.global_agreement(self._num_gradient_accumulation_steps), (
+        assert global_agreement(self._num_gradient_accumulation_steps), (
             "`num_gradient_accumulation_steps` must be the same across all ranks"
         )
 
         # Check global agreement for validation parameters
-        assert dist_ops.global_agreement(self._num_val_steps), (
+        assert global_agreement(self._num_val_steps), (
             "`num_val_steps` must be the same across all ranks"
         )
-        assert dist_ops.global_agreement(self._num_sanity_val_steps), (
+        assert global_agreement(self._num_sanity_val_steps), (
             "`num_sanity_val_steps` must be the same across all ranks"
         )
 

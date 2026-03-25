@@ -4,7 +4,6 @@ import math
 import os
 from typing import Callable, Iterable, cast
 
-import dist_util
 import torch
 import torch._functorch
 import torch._functorch.config
@@ -21,6 +20,7 @@ from torch.distributed.fsdp import CPUOffloadPolicy, MixedPrecisionPolicy
 from torch.distributed.tensor import DTensor
 
 from dream_trainer.configs import DeviceParameters
+from dream_trainer.dist.core import is_rank_zero
 from dream_trainer.utils import logger
 from dream_trainer.utils.common import get_device_info, stacked_context
 
@@ -157,7 +157,7 @@ class DistributedWorld:
 
     @property
     def is_global_zero(self):
-        return dist_util.core.is_rank_zero()
+        return is_rank_zero()
 
     @property
     def dp_size(self) -> int:
