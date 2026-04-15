@@ -1,21 +1,23 @@
 from typing import Any, override
 
 import torch
-from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
+from torch.distributed.tensor import DTensor
+from torch.optim.swa_utils import get_ema_multi_avg_fn
 
 from dream_trainer.trainer import DreamTrainer
 from dream_trainer.utils import logger
 
+from .averaged_model import EMA
 from ..callback import Callback
 
 
 class EMACallback(Callback[DreamTrainer]):
     """
-    Exponential Moving Average (EMA) callback using torch.optim.swa_utils.AveragedModel.
+    Exponential Moving Average (EMA) callback for DDP/FSDP trainer models.
 
     This callback maintains exponential moving averages of specified models during training.
-    The EMA models are created using torch's AveragedModel which provides efficient
-    implementations for averaging model parameters.
+    The EMA state is tracked as detached parameter/buffer tensors keyed by name so it can
+    follow composable DDP and FSDP2-wrapped models without cloning the wrapped module.
 
     Args:
         model_names: List of model names to apply EMA to. Model names should match
@@ -24,8 +26,9 @@ class EMACallback(Callback[DreamTrainer]):
             historical parameters.
         update_every_n_steps: Update EMA models every N training steps (default: 1).
         start_step: Step to start EMA updates (default: 0).
-        device: Device to store EMA models on. If None, uses the same device as the
-            original models (default: None).
+        cpu_offload: Store EMA tensors on CPU instead of the model device.
+        use_buffers: Track buffers in addition to parameters. Non-floating buffers are
+            copied directly from the live model instead of being averaged.
 
     """
 
@@ -36,15 +39,18 @@ class EMACallback(Callback[DreamTrainer]):
         update_every_n_steps: int = 1,
         start_step: int = 0,
         cpu_offload: bool = False,
+        use_buffers: bool = False,
     ):
         self.model_names = model_names
         self.decay = decay
         self.update_every_n_steps = update_every_n_steps
         self.start_step = start_step
         self.cpu_offload = cpu_offload
+        self.use_buffers = use_buffers
 
         # State
-        self.ema_models: dict[str, AveragedModel] = {}
+        self.ema_models: dict[str, EMA] = {}
+        self._validation_backup: dict[str, dict[str, dict[str, torch.Tensor]]] = {}
 
     @override
     def post_setup(self):
@@ -54,16 +60,13 @@ class EMACallback(Callback[DreamTrainer]):
                 raise ValueError(f"Model '{model_name}' not found in trainer.named_models()")
 
             model = named_models[model_name]
-            ema_model = AveragedModel(
+            ema_model = EMA(
                 model,
                 multi_avg_fn=get_ema_multi_avg_fn(self.decay),
-                use_buffers=False,
                 device=torch.device("cpu") if self.cpu_offload else None,
+                use_buffers=self.use_buffers,
             )
-            # AveragedModel copies params on first update_parameters call
-            # (n_averaged 0→1) instead of EMA blending.  For EMA we want to
-            # blend from the very first step, so pre-set n_averaged to 1.
-            ema_model.n_averaged.fill_(1)
+            ema_model.initialize_from_model(model, n_averaged=1)
 
             self.ema_models[model_name] = ema_model
 
@@ -82,6 +85,40 @@ class EMACallback(Callback[DreamTrainer]):
                 # Update EMA model parameters
                 ema_model.update_parameters(model)
 
+    @override
+    def pre_validation_epoch(self):
+        self._validation_backup = {}
+
+        for model_name in self.model_names:
+            model = self.trainer.get_model(model_name)
+            self._validation_backup[model_name] = {
+                "parameters": {
+                    name: (param.to_local() if isinstance(param, DTensor) else param).detach().clone()
+                    for name, param in model.named_parameters()
+                },
+                "buffers": {
+                    name: (buffer.to_local() if isinstance(buffer, DTensor) else buffer).detach().clone()
+                    for name, buffer in model.named_buffers()
+                },
+            }
+            self.ema_models[model_name].copy_to(model)
+
+    @override
+    def post_validation_epoch(self, result: dict[str, Any]):
+        for model_name in self.model_names:
+            model = self.trainer.get_model(model_name)
+            backup = self._validation_backup.pop(model_name)
+
+            for name, param in model.named_parameters():
+                local_param = param.to_local() if isinstance(param, DTensor) else param
+                local_param.copy_(backup["parameters"][name], non_blocking=True)
+
+            for name, buffer in model.named_buffers():
+                local_buffer = buffer.to_local() if isinstance(buffer, DTensor) else buffer
+                local_buffer.copy_(backup["buffers"][name], non_blocking=True)
+
+        return result
+
     def state_dict(self) -> dict[str, Any]:
         return {
             "model_names": self.model_names,
@@ -89,7 +126,10 @@ class EMACallback(Callback[DreamTrainer]):
             "update_every_n_steps": self.update_every_n_steps,
             "start_step": self.start_step,
             "cpu_offload": self.cpu_offload,
-            "ema_models": {name: ema_model for name, ema_model in self.ema_models.items()},
+            "use_buffers": self.use_buffers,
+            "ema_models": {
+                name: ema_model.state_dict() for name, ema_model in self.ema_models.items()
+            },
         }
 
     def _safe_pop(self, attr: str, state_dict: dict[str, Any], raise_on_change: bool = False):
@@ -110,6 +150,8 @@ class EMACallback(Callback[DreamTrainer]):
         self._safe_pop("update_every_n_steps", state_dict)
         self._safe_pop("start_step", state_dict)
         self._safe_pop("cpu_offload", state_dict)
+        if "use_buffers" in state_dict:
+            self._safe_pop("use_buffers", state_dict)
 
         ema_models = state_dict.pop("ema_models")
         for model_name, ema_model in ema_models.items():

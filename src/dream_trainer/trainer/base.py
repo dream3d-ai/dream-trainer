@@ -6,8 +6,10 @@ from dataclasses import dataclass
 from itertools import repeat
 from typing import TYPE_CHECKING, Any, Iterable, cast
 
+import dist_util.ops as dist_ops
 import torch
 import torch.nn as nn
+from dist_util.ops import apply_to_collection
 from torch.distributed._composable.replicate import DDP as DDPModule
 from torch.distributed.checkpoint.state_dict import (
     get_optimizer_state_dict,
@@ -20,8 +22,6 @@ from torch.optim.optimizer import Optimizer
 from typing_extensions import override
 
 from dream_trainer.configs.trainer import TrainingParameters
-from dream_trainer.dist.ops import global_agreement
-from dream_trainer.dist.utils import apply_to_collection
 from dream_trainer.utils import logger
 from dream_trainer.utils.common import seed_everything, stacked_context
 from dream_trainer.utils.dataloader import (
@@ -369,6 +369,106 @@ class BaseTrainer(EvalMetricMixin, Stateful):
             if any(p.requires_grad for p in model.parameters()):
                 model.train()
 
+    def _optimizer_parameters(self, optimizer: Optimizer) -> list[torch.nn.Parameter]:
+        parameters: list[torch.nn.Parameter] = []
+        seen: set[int] = set()
+
+        for group in optimizer.param_groups:
+            for parameter in group["params"]:
+                if not isinstance(parameter, torch.nn.Parameter):
+                    raise TypeError(
+                        f"Optimizer contains non-Parameter entry of type {type(parameter).__name__}"
+                    )
+
+                parameter_id = id(parameter)
+                if parameter_id in seen:
+                    continue
+
+                seen.add(parameter_id)
+                parameters.append(parameter)
+
+        return parameters
+
+    def _validate_optimizer_parameters(self, optimizer: Optimizer) -> list[torch.nn.Parameter]:
+        parameters = self._optimizer_parameters(optimizer)
+        meta_parameters: list[str] = []
+        nonfinite_parameters: list[str] = []
+
+        for idx, parameter in enumerate(parameters):
+            if parameter.is_meta:
+                meta_parameters.append(f"param_group_parameter[{idx}]")
+                continue
+
+            if (torch.is_floating_point(parameter) or torch.is_complex(parameter)) and not torch.isfinite(
+                parameter
+            ).all():
+                nonfinite_parameters.append(f"param_group_parameter[{idx}]")
+
+        if meta_parameters or nonfinite_parameters:
+            issues: list[str] = []
+            if meta_parameters:
+                issues.append(
+                    "meta optimizer parameters: "
+                    + ", ".join(meta_parameters[:8])
+                    + (" ..." if len(meta_parameters) > 8 else "")
+                )
+            if nonfinite_parameters:
+                issues.append(
+                    "non-finite optimizer parameters: "
+                    + ", ".join(nonfinite_parameters[:8])
+                    + (" ..." if len(nonfinite_parameters) > 8 else "")
+                )
+            raise RuntimeError("Optimizer parameters are invalid before step; " + "; ".join(issues))
+
+        return parameters
+
+    def _validate_gradients(self, parameters: list[torch.nn.Parameter]) -> None:
+        meta_gradients: list[str] = []
+        nonfinite_gradients: list[str] = []
+        misplaced_gradients: list[str] = []
+
+        for idx, parameter in enumerate(parameters):
+            grad = parameter.grad
+            if grad is None:
+                continue
+
+            if grad.is_meta:
+                meta_gradients.append(f"parameter[{idx}]")
+                continue
+
+            if grad.device != parameter.device:
+                misplaced_gradients.append(
+                    f"parameter[{idx}] grad on {grad.device} but parameter on {parameter.device}"
+                )
+                continue
+
+            if (torch.is_floating_point(grad) or torch.is_complex(grad)) and not torch.isfinite(
+                grad
+            ).all():
+                nonfinite_gradients.append(f"parameter[{idx}]")
+
+        if meta_gradients or nonfinite_gradients or misplaced_gradients:
+            issues: list[str] = []
+            if meta_gradients:
+                issues.append(
+                    "meta gradients: "
+                    + ", ".join(meta_gradients[:8])
+                    + (" ..." if len(meta_gradients) > 8 else "")
+                )
+            if misplaced_gradients:
+                issues.append(
+                    "device-mismatched gradients: "
+                    + ", ".join(misplaced_gradients[:4])
+                    + (" ..." if len(misplaced_gradients) > 4 else "")
+                )
+            if nonfinite_gradients:
+                issues.append(
+                    "non-finite gradients: "
+                    + ", ".join(nonfinite_gradients[:8])
+                    + (" ..." if len(nonfinite_gradients) > 8 else "")
+                )
+            raise RuntimeError("Invalid gradients before optimizer step; " + "; ".join(issues))
+
     def step(self, optimizer: Optimizer) -> torch.Tensor:
         """
         Performs a single optimization step for the given model and optimizer.
@@ -392,13 +492,20 @@ class BaseTrainer(EvalMetricMixin, Stateful):
             torch.Tensor: The total norm of the gradients before clipping.
         """
         model = self.get_model_by_optimizer(self.get_name_by_optimizer(optimizer))
-        parameters = [p for p in model.parameters() if p.grad is not None]
+        all_parameters = self._validate_optimizer_parameters(optimizer)
+        parameters = [p for p in all_parameters if p.grad is not None]
         if len(parameters) == 0:
             raise RuntimeError("Tried to step model with no gradients on any of its parameters")
 
+        self._validate_gradients(parameters)
         total_norm = self.total_gradient_norm(parameters, p=2, foreach=True)
+        if not torch.isfinite(total_norm):
+            raise RuntimeError(f"Gradient norm is non-finite before optimizer step: {total_norm}")
+        if float(total_norm) == 0.0:
+            raise RuntimeError("All optimizer gradients are exactly zero before optimizer step")
         self.clip_gradient_norm(parameters, total_norm, foreach=True)
 
+        model = self.get_model_by_optimizer(self.get_name_by_optimizer(optimizer))
         self.callbacks.pre_optimizer_step(model, optimizer)
         optimizer.step()
         self.callbacks.post_optimizer_step(model, optimizer)
@@ -773,18 +880,18 @@ class BaseTrainer(EvalMetricMixin, Stateful):
 
         # Check global agreement for training parameters
         # Note: _global_batch_size varies with dp_size in elastic training, so no assertion needed
-        assert global_agreement(self._num_train_batches), (
+        assert dist_ops.global_agreement(self._num_train_batches), (
             "`num_train_batches` must be the same across all ranks"
         )
-        assert global_agreement(self._num_gradient_accumulation_steps), (
+        assert dist_ops.global_agreement(self._num_gradient_accumulation_steps), (
             "`num_gradient_accumulation_steps` must be the same across all ranks"
         )
 
         # Check global agreement for validation parameters
-        assert global_agreement(self._num_val_steps), (
+        assert dist_ops.global_agreement(self._num_val_steps), (
             "`num_val_steps` must be the same across all ranks"
         )
-        assert global_agreement(self._num_sanity_val_steps), (
+        assert dist_ops.global_agreement(self._num_sanity_val_steps), (
             "`num_sanity_val_steps` must be the same across all ranks"
         )
 

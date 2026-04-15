@@ -2,9 +2,10 @@ from dataclasses import dataclass, field
 from math import prod
 from typing import Literal
 
+import dist_util
 import torch
+import torch.distributed.tensor.parallel
 
-from dream_trainer.dist.core import get_dist_local_world_size, get_dist_world_size
 from dream_trainer.utils import logger
 
 
@@ -130,7 +131,7 @@ class DeviceParameters:
             assert isinstance(dp_shard, int), (
                 "dp_shard must be an integer if tensor_parallel is auto"
             )
-            tensor_parallel = get_dist_local_world_size()
+            tensor_parallel = dist_util.core.get_dist_local_world_size()
 
         return cls(
             _tensor_parallel=tensor_parallel,
@@ -161,8 +162,8 @@ class DeviceParameters:
         TP within nodes
         DP-Shard (FSDP) across nodes
         """
-        global_world_size = get_dist_world_size()
-        local_world_size = get_dist_local_world_size()
+        global_world_size = dist_util.core.get_dist_world_size()
+        local_world_size = dist_util.core.get_dist_local_world_size()
         if tensor_parallel == "auto" and dp_shard == "auto":
             tensor_parallel = local_world_size
             dp_shard = global_world_size // tensor_parallel
@@ -259,7 +260,7 @@ class DeviceParameters:
             degree == "auto" or int(degree) > 0 for degree in parallelism_dimensions.values()
         ), f"All parallelism dimensions must be set to 'auto' or a positive integer. Got {self}"
 
-        world_size = get_dist_world_size()
+        world_size = dist_util.core.get_dist_world_size()
         if len(auto_dims) == 1:
             remainder = prod(int(d) for d in parallelism_dimensions.values() if d != "auto")
             assert world_size % remainder == 0, (

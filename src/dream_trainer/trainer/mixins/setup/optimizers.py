@@ -261,14 +261,30 @@ class OptimizerAndSchedulerSetupMixin(AbstractTrainer):
 
         for model, optim in model_optimizer_map.items():
             if isinstance(optim, Optimizer):
-                self._optimizer_model_map[self.get_name_by_optimizer(optim)] = (
-                    self.get_name_by_model(model)
-                )
+                optimizer_name = self.get_name_by_optimizer(optim)
+                model_name = self.get_name_by_model(model)
+                existing_model_name = self._optimizer_model_map.get(optimizer_name)
+                if existing_model_name is not None and existing_model_name != model_name:
+                    raise ValueError(
+                        "Each optimizer must be associated with exactly one model. "
+                        f"Optimizer `{optimizer_name}` was assigned to both "
+                        f"`{existing_model_name}` and `{model_name}`. "
+                        "Use separate optimizers or register the trainable submodules under one model."
+                    )
+                self._optimizer_model_map[optimizer_name] = model_name
             else:
                 for opt in optim:
-                    self._optimizer_model_map[self.get_name_by_optimizer(opt)] = (
-                        self.get_name_by_model(model)
-                    )
+                    optimizer_name = self.get_name_by_optimizer(opt)
+                    model_name = self.get_name_by_model(model)
+                    existing_model_name = self._optimizer_model_map.get(optimizer_name)
+                    if existing_model_name is not None and existing_model_name != model_name:
+                        raise ValueError(
+                            "Each optimizer must be associated with exactly one model. "
+                            f"Optimizer `{optimizer_name}` was assigned to both "
+                            f"`{existing_model_name}` and `{model_name}`. "
+                            "Use separate optimizers or register the trainable submodules under one model."
+                        )
+                    self._optimizer_model_map[optimizer_name] = model_name
 
     def _configure_schedulers(self):
         """Internal method to configure schedulers and map them to optimizers.

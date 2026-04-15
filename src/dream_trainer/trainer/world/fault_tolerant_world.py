@@ -1,5 +1,6 @@
 import datetime as dt
 
+import dist_util
 import torch
 import torch.distributed.tensor._random
 import torch.distributed.tensor.parallel
@@ -8,7 +9,6 @@ from torch.distributed.device_mesh import DeviceMesh
 from typing_extensions import override
 
 from dream_trainer.configs import DeviceParameters, FaultToleranceParameters
-from dream_trainer.dist.core import get_dist_local_rank, get_dist_local_world_size
 
 from .distributed_world import DistributedWorld, construct_mesh
 
@@ -32,8 +32,8 @@ class FaultTolerantWorld(DistributedWorld):
         super().__init__(config)
 
         self.ft_config = ft_config
-        self.group_rank = get_dist_local_rank()
-        self.group_size = get_dist_local_world_size()
+        self.group_rank = dist_util.core.get_dist_local_rank()
+        self.group_size = dist_util.core.get_dist_local_world_size()
 
         self.replica_id = f"{self.ft_config.replica_prefix or 'ft'}_{self.group_rank}"
 

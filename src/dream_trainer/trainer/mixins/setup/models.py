@@ -186,6 +186,46 @@ class ModelSetupMixin(AbstractTrainer):
         """
         pass
 
+    def validate_materialized_models(self):
+        """Fail fast if setup left any model tensors invalid after materialization."""
+        meta_tensors: list[str] = []
+        nonfinite_tensors: list[str] = []
+
+        for model_name, model in self.named_models().items():
+            for tensor_name, tensor in model.named_parameters():
+                if tensor.is_meta:
+                    meta_tensors.append(f"{model_name}.{tensor_name}")
+                    continue
+                if (torch.is_floating_point(tensor) or torch.is_complex(tensor)) and not torch.isfinite(
+                    tensor
+                ).all():
+                    nonfinite_tensors.append(f"{model_name}.{tensor_name}")
+
+            for tensor_name, tensor in model.named_buffers():
+                if tensor.is_meta:
+                    meta_tensors.append(f"{model_name}.{tensor_name}")
+                    continue
+                if (torch.is_floating_point(tensor) or torch.is_complex(tensor)) and not torch.isfinite(
+                    tensor
+                ).all():
+                    nonfinite_tensors.append(f"{model_name}.{tensor_name}")
+
+        if meta_tensors or nonfinite_tensors:
+            issues: list[str] = []
+            if meta_tensors:
+                issues.append(
+                    "meta tensors remain after materialization: "
+                    + ", ".join(meta_tensors[:8])
+                    + (" ..." if len(meta_tensors) > 8 else "")
+                )
+            if nonfinite_tensors:
+                issues.append(
+                    "non-finite tensors found after initialization: "
+                    + ", ".join(nonfinite_tensors[:8])
+                    + (" ..." if len(nonfinite_tensors) > 8 else "")
+                )
+            raise RuntimeError("Invalid model state after setup; " + "; ".join(issues))
+
     def context_parallel_buffers(self) -> list[torch.Tensor]:
         """Return buffers that need to be synchronized across context parallel ranks.
 
@@ -661,5 +701,6 @@ class ModelSetupMixin(AbstractTrainer):
 
         # Materialize model & register forward methods
         self._materialize_model()
+        self.validate_materialized_models()
         self._mark_forward_methods()
         logger.info("Setup Models")
