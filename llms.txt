@@ -1,0 +1,380 @@
+# dream-trainer
+
+Project metadata:
+- Package: `dream-trainer`
+- Docs: `https://dream3d-ai.github.io/dream-trainer/`
+- Repository: `https://github.com/dream3d/dream-trainer`
+- Summary: composable distributed training framework built around PyTorch DTensor abstractions
+
+Short description:
+- Dream Trainer is a thin lifecycle framework for writing custom PyTorch trainers that can scale from single-device runs to distributed training without rewriting the training algorithm.
+- The model and algorithm stay explicit in trainer hooks.
+- Distributed scale lives in typed config objects, especially `DeviceParameters` and `TrainingParameters`.
+- Cross-cutting production behavior such as logging, checkpointing, profiling, and progress reporting lives in callbacks.
+
+Core mental model:
+- Keep project-specific logic explicit: model, data, loss, optimizer, and model-specific parallelism.
+- Let Dream Trainer own lifecycle orchestration: distributed world setup, mesh creation, model materialization, callback dispatch, and trainer loop structure.
+- Prefer config changes over algorithm rewrites when changing scale, logging, checkpointing, validation cadence, or runtime behavior.
+- Use ordinary PyTorch code inside trainer hooks. Dream Trainer is not a hidden declarative framework.
+
+Lifecycle ordering:
+1. Create distributed world.
+2. Build the named device mesh.
+3. Run `configure_models()` on the meta device.
+4. Apply enabled parallelism hooks.
+5. Materialize tensors on the real training device.
+6. Run `init_weights()`.
+7. Build optimizers and schedulers.
+8. Run `trainer.fit()` for sanity validation, training, validation, callbacks, and teardown.
+
+Important constraints:
+- Do not initialize weights inside `configure_models()`. That hook runs on meta tensors, so initialization there is discarded.
+- Do not build optimizers in `configure_models()`. Optimizers must be constructed after materialization over real tensors.
+- Dream Trainer does not guess model-specific parallelism. If config enables DDP, FSDP, TP, PP, or compile, the matching hooks must exist when needed.
+- Use PyTorch Distributed Checkpoint helpers for model state so checkpoints can survive mesh-shape changes.
+- Prefer callbacks for logging, profiling, checkpointing, EMA, FP8, progress bars, and similar lifecycle behavior.
+
+Stable edit surfaces:
+- Change model structure: `configure_models`
+- Initialize or load weights: `init_weights`
+- Change checkpointable model state: `model_state_dict`
+- Change optimizer ownership: `configure_optimizers`
+- Change scheduler ownership: `configure_schedulers`
+- Change dataloaders: `configure_dataloaders`
+- Change training algorithm or loss: `training_step`
+- Change evaluation logic: `validation_step`
+- Change metrics: `configure_metrics`
+- Change distributed scale: `DeviceParameters`
+- Change model-specific parallelism: `apply_replicate`, `apply_fully_shard`, `apply_tensor_parallel`, `apply_pipeline_parallel`, `apply_activation_checkpointing`, `apply_compile`
+- Add logging, checkpointing, profiling, or progress reporting: callbacks
+
+Main trainer hooks:
+- `configure_models()`: define module structure under a meta-device context
+- `init_weights()`: initialize or load weights after real tensors exist
+- `model_state_dict()`: return the model state used for checkpoint save/load
+- `configure_optimizers()`: create optimizers and return model-to-optimizer mapping
+- `configure_dataloaders()`: return train and validation iterables
+- `configure_metrics()`: register metrics as trainer attributes
+- `training_step(batch, batch_idx)`: forward pass, loss, backward, and optimizer stepping logic
+- `validation_step(batch, batch_idx)`: evaluation logic and validation logging
+
+Common parallelism dimensions:
+- `pp`: pipeline parallelism
+- `dp_replicate`: replicated data parallelism
+- `dp_shard`: sharded data parallelism, FSDP-style
+- `cp`: context parallelism
+- `tp`: tensor parallelism
+
+Parallelism examples:
+
+DDP example:
+```python
+from torch.distributed._composable.replicate import replicate
+from torch.utils.data import DataLoader, DistributedSampler
+
+config = MyTrainerConfig(
+    device_parameters=DeviceParameters.DDP(),
+    training_parameters=TrainingParameters(n_epochs=1, train_steps_per_epoch=200),
+)
+
+
+class MyTrainer(DreamTrainer):
+    def apply_compile(self):
+        self.model.compile(mode="max-autotune-no-cudagraphs", dynamic=False)
+
+    def apply_replicate(self, dp_replicate_mesh):
+        replicate(self.model, device_mesh=dp_replicate_mesh)
+
+    def configure_dataloaders(self):
+        sampler = DistributedSampler(
+            self.dataset,
+            num_replicas=self.world.dp_size,
+            rank=self.world.dp_rank,
+            shuffle=True,
+        )
+        train_loader = DataLoader(self.dataset, batch_size=self.config.batch_size, sampler=sampler)
+        return train_loader, train_loader
+```
+- Use DDP when the full model fits on each GPU and you want more throughput.
+- `DeviceParameters.DDP()` enables replicated data parallelism and typically expects `apply_replicate`.
+- Keep dataloaders rank-aware with `self.world.dp_rank` and `self.world.dp_size`.
+
+FSDP example:
+```python
+from torch.distributed.fsdp import fully_shard
+
+config = MyTrainerConfig(
+    device_parameters=DeviceParameters.FSDP(
+        compile_model=False,
+        async_tensor_parallel=False,
+    ),
+    training_parameters=TrainingParameters(n_epochs=1, train_steps_per_epoch=50),
+)
+
+
+class MyTrainer(DreamTrainer):
+    def apply_fully_shard(self, config):
+        for layer in self.model.layers:
+            fully_shard(layer, **config)
+        fully_shard(self.model, **config)
+```
+- Use FSDP when the full replicated model does not fit on each GPU.
+- Shard repeated blocks first, then shard the root module last.
+- After non-compiled FSDP is stable, you can switch to `DeviceParameters.FSDP(compile_model=True)` and re-enable `apply_compile`.
+
+Tensor parallel example:
+```python
+from torch.distributed.tensor.parallel import parallelize_module
+
+config = MyTrainerConfig(
+    device_parameters=DeviceParameters.FSDP(
+        tensor_parallel="auto",
+        compile_model=True,
+        async_tensor_parallel=True,
+    ),
+)
+
+my_tp_plan = {
+    # Define the model-specific tensor-parallel policy here.
+}
+
+
+class MyTrainer(DreamTrainer):
+    def apply_tensor_parallel(self, tp_mesh):
+        parallelize_module(self.model, tp_mesh, plan=my_tp_plan)
+```
+- Use tensor parallelism when individual layers are too large even after sharding the model with FSDP.
+- The TP plan is model-specific; Dream Trainer does not infer it for you.
+- Async TP requires `compile_model=True`. If you disable compile for debugging, disable async TP too.
+
+Recommended starting points:
+- Start with presets such as `DeviceParameters.SINGLE_DEVICE()`, `DeviceParameters.DDP()`, `DeviceParameters.FSDP()`, or `DeviceParameters.HSDP(...)`.
+- Start with the quick start if you need the smallest useful trainer example.
+- Use tutorials if you want an end-to-end example that grows from single-device to production-oriented distributed training.
+- Use API reference pages for stable import paths and ownership boundaries.
+
+Primary imports:
+```python
+from dream_trainer import DreamTrainer, DreamTrainerConfig, callbacks
+from dream_trainer.configs import (
+    CheckpointParameters,
+    DeviceParameters,
+    TrainingParameters,
+    WandbLoggingParameters,
+)
+from dream_trainer.utils.entrypoint import entrypoint
+```
+
+CLI usage:
+- Use `@entrypoint` for the simplest training script.
+- Use `cli()` when you want subcommands such as profiling or benchmarking, or flags such as `--cfg`, `--resume`, and `--init-from` without editing the trainer.
+- Install CLI support with `pip install "dream-trainer[cli]"` or `uv add "dream-trainer[cli]"`.
+
+CLI example:
+```python
+from dream_trainer.utils.cli import cli
+
+
+def main(config: MyTrainerConfig) -> None:
+    MyTrainer(config).fit()
+
+
+if __name__ == "__main__":
+    cli(main, MyTrainerConfig())
+```
+
+Common CLI commands:
+```bash
+python train.py --help
+python train.py --cfg
+python train.py --resume my-experiment-2024-04-19
+python train.py --init-from /checkpoints/base-run/checkpoints
+python train.py --no-compile
+python train.py summarize --depth 2
+python train.py benchmark --skip 8 --print-every 1 --window-size 4
+python train.py profile --skip 5 --warmup 1 --cycle 4 --repeat 1 --with-stack
+python train.py find-graph-breaks --output-path graph_breaks.log --skip 5
+python train.py export --checkpoint-path /checkpoints/prod-run/checkpoints --output-path model.pt --resume-mode last
+```
+
+Important CLI behavior:
+- `cli()` wraps `@entrypoint` internally, so distributed setup is the same as the plain entrypoint path.
+- `--cfg` prints the fully resolved config after modifiers are applied and exits without training.
+- `--resume` restores full trainer state from the latest checkpoint for an experiment name.
+- `--init-from` warm-starts model weights only and starts training from step 0.
+- `--resume` and `--init-from` are mutually exclusive.
+- Common built-in modifiers include `--no-compile`, `--no-log`, `--no-ckpt`, `--no-sanity`, `--ckpt-acts`, `--cpu-offload`, `--single-device`, `--force-ddp`, `--force-fsdp`, and `--grad-accum-steps N`.
+
+Launch patterns:
+```bash
+CUDA_VISIBLE_DEVICES=0 python train.py
+CUDA_VISIBLE_DEVICES=0,1,2,3 python train.py
+torchrun --nproc-per-node=8 --nnodes=$NNODES --node-rank=$RANK --master-addr=$MASTER_ADDR --master-port=$MASTER_PORT train.py
+```
+- If distributed environment variables are already present, Dream Trainer uses the provided world.
+- If multiple CUDA devices are visible and no distributed environment is already provided, the entrypoint launches one local process per visible GPU.
+
+Minimal project layout:
+- `config.py`: define the `DreamTrainerConfig` subclass and named config factories such as debug, DDP, or FSDP runs.
+- `train.py`: define the `DreamTrainer` subclass, implement hooks, and launch the selected config.
+
+Minimal layout example:
+```python
+# config.py
+from dataclasses import dataclass
+
+from dream_trainer import DreamTrainerConfig
+from dream_trainer.configs import DeviceParameters, TrainingParameters
+
+
+@dataclass(kw_only=True)
+class MyTrainerConfig(DreamTrainerConfig):
+    batch_size: int = 8
+    learning_rate: float = 1e-4
+
+
+def debug_config() -> MyTrainerConfig:
+    return MyTrainerConfig(
+        device_parameters=DeviceParameters.SINGLE_DEVICE(compile_model=False),
+        training_parameters=TrainingParameters(train_steps_per_epoch=10),
+    )
+
+
+def fsdp_config() -> MyTrainerConfig:
+    return MyTrainerConfig(
+        device_parameters=DeviceParameters.FSDP(compile_model=True),
+        training_parameters=TrainingParameters(train_steps_per_epoch=1000),
+    )
+```
+
+```python
+# train.py
+from dream_trainer.utils.cli import cli
+
+from config import MyTrainerConfig, debug_config
+
+
+class MyTrainer(DreamTrainer):
+    ...
+
+
+def main(config: MyTrainerConfig) -> None:
+    MyTrainer(config).fit()
+
+
+if __name__ == "__main__":
+    cli(main, debug_config())
+```
+- Keep config selection in `config.py` when possible.
+- Keep trainer algorithm and hook implementations in `train.py`.
+
+Checkpoint pattern:
+```python
+from typing import Any
+
+from torch.distributed.checkpoint.state_dict import StateDictOptions, get_model_state_dict
+
+
+def model_state_dict(self, **_: Any) -> dict[str, Any]:
+    return {
+        "model": get_model_state_dict(
+            self.model,
+            options=StateDictOptions(),
+        )
+    }
+```
+- Prefer DCP-compatible model state helpers even for single-device runs so the same code scales to sharded checkpoints later.
+- `--resume` restores full trainer state, while `--init-from` is for weights-only warm starts.
+
+Validation checklist:
+- World size matches the active mesh dimensions, or at most one dimension is `"auto"`.
+- Every enabled parallelism mode has its required hook implemented.
+- Dataloaders use `self.world.dp_rank` and `self.world.dp_size`.
+- `model_state_dict()` returns DCP-compatible model state.
+- `compile_model` and async tensor parallel settings agree.
+
+Quick usage sketch:
+```python
+from dream_trainer import DreamTrainer
+
+class MyTrainer(DreamTrainer):
+    def configure_models(self):
+        self.model = MyModel(self.config.model)
+
+    def configure_optimizers(self):
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
+        return {self.model: self.optimizer}
+
+    def training_step(self, batch, batch_idx):
+        logits = self.model(batch["input"])
+        loss = F.cross_entropy(logits, batch["target"])
+        self.backward(loss)
+        return {"train/loss": loss, "train/grad_norm": self.step(self.optimizer)}
+```
+
+Documentation map:
+- `index.md`: project overview, value proposition, quick example, and navigation hub
+- `comparison.md`: compare Dream Trainer to other distributed training approaches
+- `agents.md`: why the framework is friendly to AI-assisted code changes
+- `installation.md`: installation and environment setup
+- `getting-started.md`: smallest useful trainer example
+- `core-concepts.md`: lifecycle, device mesh, meta tensors, callbacks vs mixins
+- `design-philosophy.md`: design rationale
+- `trainer-guide.md`: trainer hooks and extension patterns
+- `configuration.md`: typed config patterns and common runtime controls
+- `cli.md`: CLI entrypoints, modifiers, and utility commands
+- `parallelism.md`: DDP, FSDP, TP, CP, PP, and related hooks
+- `callbacks.md`: reusable lifecycle behaviors
+- `checkpointing.md`: save/load and resume behavior with DCP
+- `logging-metrics.md`: logging and metric patterns
+- `debugging.md`: common failure modes and debugging workflow
+- `performance.md`: profiling and performance guidance
+- `troubleshooting.md`: operational fixes and common issues
+- `faq.md`: concise answers to recurring questions
+- `contributing.md`: contributor guidance
+
+Tutorials:
+- `tutorials/first-trainer.md`: build a simple trainer
+- `tutorials/multi-gpu.md`: scale to multi-GPU
+- `tutorials/fsdp.md`: add sharded training
+- `tutorials/production.md`: move toward production shape
+- `tutorials/custom-components.md`: extend the trainer with custom components
+
+API reference map:
+- `api/index.md`: API overview and import map
+- `api/trainers/*.md`: `AbstractTrainer`, `BaseTrainer`, `DreamTrainer`
+- `api/mixins/*.md`: setup, metrics, logging, quantization mixins
+- `api/callbacks/*.md`: checkpointing, logging, performance, and training callbacks
+- `api/configuration/*.md`: parameter dataclasses for device, training, and checkpointing
+- `api/utilities/*.md`: distributed world helpers, CLI utilities, and common helpers
+
+Good tasks for an LLM or coding agent:
+- Add or update a callback.
+- Convert a single-device config into DDP or FSDP config.
+- Add checkpointing through callbacks.
+- Add metrics without changing the training algorithm.
+- Split a minimal example into separate config and train files.
+- Add explicit optimizer branches in `training_step`.
+- Add debug configs with `compile_model=False`.
+
+Tasks that require extra care:
+- Inventing a tensor-parallel plan for an unfamiliar model architecture.
+- Changing reinforcement learning objectives or other mathematically sensitive algorithms.
+- Modifying pipeline schedules.
+- Debugging numerical instability at scale.
+- Performance tuning across many nodes.
+
+Common failure modes:
+- Missing `apply_compile` when `compile_model=True`.
+- Missing `apply_replicate`, `apply_fully_shard`, or `apply_tensor_parallel` when the matching parallelism mode is enabled.
+- Dataloaders not using `self.world.dp_rank` and `self.world.dp_size`, causing silent duplicated batches across data-parallel workers.
+- Initializing or loading weights in `configure_models()` instead of `init_weights()`, which silently loses work on meta tensors.
+- Using plain `self.model.state_dict()` instead of DCP-compatible model state helpers when scalable checkpointing is required.
+
+Best-practice summary for edits:
+- Keep scale changes in config when possible.
+- Keep algorithm changes in `training_step` and `validation_step`.
+- Keep model construction in `configure_models` and weight initialization in `init_weights`.
+- Keep production concerns in callbacks.
+- Keep checkpoint state explicit and DCP-compatible.

@@ -1,17 +1,14 @@
 # Installation
 
-!!! abstract "TL;DR"
-    - `pip install "dream-trainer[metrics,wandb]"` for the default trainer path.
-    - Add extras — `rich`, `torchao`, `torchft`, `cli` — only when you need them.
-    - Launch with `torchrun` or Dream Trainer's `@entrypoint` helper.
+!!! abstract "TL;DR" - `pip install "dream-trainer[metrics,wandb]"` for the default trainer path. - Add extras — `rich`, `torchao`, `torchft`, `cli` — only when you need them. - Launch with `torchrun` or Dream Trainer's `@entrypoint` helper.
 
 ## Requirements
 
-| Requirement | Version |
-| --- | --- |
-| Python | 3.10+ |
-| PyTorch | 2.7.1+ |
-| Launcher | `torchrun` or `@entrypoint` |
+| Requirement | Version                     |
+| ----------- | --------------------------- |
+| Python      | 3.10+                       |
+| PyTorch     | 2.9.1+                      |
+| Launcher    | `torchrun` or `@entrypoint` |
 
 ## Package install
 
@@ -28,23 +25,23 @@
     ```
 
 !!! note "Why `wandb` by default?"
-    The current top-level trainer composition imports the WandB mixin. Installing the `wandb` extra avoids import-time surprises even if you disable logging via `WandbLoggingParameters(enabled=False)`.
+The current top-level trainer composition imports the WandB mixin. Installing the `wandb` extra avoids import-time surprises even if you disable logging via `WandbLoggingParameters(enabled=False)`.
 
 ### Optional extras
 
-| Extra | When to install |
-| --- | --- |
-| `rich` | Richer trainer and model summaries. |
-| `torchao` | FP8 and low-precision quantization workflows. |
-| `torchft` | Fault-tolerant training with `FaultToleranceCallback`. |
-| `cli` | Typer-based command surface — `benchmark`, `profile`, modifiers. See [Using the CLI](cli.md). |
+| Extra     | When to install                                                                               |
+| --------- | --------------------------------------------------------------------------------------------- |
+| `rich`    | Richer trainer and model summaries.                                                           |
+| `torchao` | FP8 and low-precision quantization workflows.                                                 |
+| `torchft` | Fault-tolerant training with `FaultToleranceCallback`.                                        |
+| `cli`     | Typer-based command surface — `benchmark`, `profile`, modifiers. See [Using the CLI](cli.md). |
 
 ```bash
 pip install "dream-trainer[rich,torchao]"
 ```
 
 !!! warning "`torchft` packaging"
-    Verify the package metadata exposes the `torchft` extra before relying on `dream-trainer[torchft]` — the underlying package is installed alongside Dream Trainer rather than through the extra in some releases.
+Verify the package metadata exposes the `torchft` extra before relying on `dream-trainer[torchft]` — the underlying package is installed alongside Dream Trainer rather than through the extra in some releases.
 
 ## Local workspace install
 
@@ -90,27 +87,27 @@ Dream Trainer's `@entrypoint` helper inspects the process environment:
 
 Match the launch shape to your `DeviceParameters`:
 
-| Launch shape | `DeviceParameters` |
-| --- | --- |
-| Single rank | `DeviceParameters.SINGLE_DEVICE()` |
-| Multi-GPU, no sharding | `DeviceParameters.DDP()` |
-| Sharded | `DeviceParameters.FSDP()` |
-| Hybrid sharded | `DeviceParameters.HSDP(...)` |
+| Launch shape           | `DeviceParameters`                 |
+| ---------------------- | ---------------------------------- |
+| Single rank            | `DeviceParameters.SINGLE_DEVICE()` |
+| Multi-GPU, no sharding | `DeviceParameters.DDP()`           |
+| Sharded                | `DeviceParameters.FSDP()`          |
+| Hybrid sharded         | `DeviceParameters.HSDP(...)`       |
 
 !!! tip "Richer launch surface"
-    For subcommands (`benchmark`, `profile`, `summarize`), config modifiers, and `--resume` / `--init-from` flags, see [Using the CLI](cli.md).
+For subcommands (`benchmark`, `profile`, `summarize`), config modifiers, and `--resume` / `--init-from` flags, see [Using the CLI](cli.md).
 
 ## Troubleshooting
 
 ??? question "`ModuleNotFoundError: torchmetrics`"
-    Install the metrics extra. The default `DreamTrainer` includes `EvalMetricMixin`, so metric support is part of the common path.
+Install the metrics extra. The default `DreamTrainer` includes `EvalMetricMixin`, so metric support is part of the common path.
 
     ```bash
     pip install "dream-trainer[metrics]"
     ```
 
 ??? question "`ModuleNotFoundError: wandb`"
-    Install the WandB extra. You can still disable logging with `WandbLoggingParameters(enabled=False)`.
+Install the WandB extra. You can still disable logging with `WandbLoggingParameters(enabled=False)`.
 
     ```bash
     pip install "dream-trainer[wandb]"
