@@ -4,7 +4,6 @@ import math
 import os
 from typing import Callable, Iterable, cast
 
-import dist_util
 import torch
 import torch._functorch
 import torch._functorch.config
@@ -21,6 +20,7 @@ from torch.distributed.fsdp import CPUOffloadPolicy, MixedPrecisionPolicy
 from torch.distributed.tensor import DTensor
 
 from dream_trainer.configs import DeviceParameters
+from dream_trainer.utils import dist as dist_util
 from dream_trainer.utils import logger
 from dream_trainer.utils.common import get_device_info, stacked_context
 

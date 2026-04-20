@@ -1,6 +1,5 @@
 import datetime as dt
 
-import dist_util
 import torch
 import torch.distributed.tensor._random
 import torch.distributed.tensor.parallel
@@ -9,6 +8,7 @@ from torch.distributed.device_mesh import DeviceMesh
 from typing_extensions import override
 
 from dream_trainer.configs import DeviceParameters, FaultToleranceParameters
+from dream_trainer.utils import dist as dist_util
 
 from .distributed_world import DistributedWorld, construct_mesh
 

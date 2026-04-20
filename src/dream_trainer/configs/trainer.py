@@ -2,11 +2,11 @@ from dataclasses import dataclass, field
 from math import prod
 from typing import Literal
 
-import dist_util
 import torch
 import torch.distributed.tensor.parallel
 
 from dream_trainer.utils import logger
+from dream_trainer.utils import dist as dist_util
 
 
 @dataclass

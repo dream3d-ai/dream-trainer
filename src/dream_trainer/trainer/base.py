@@ -6,10 +6,8 @@ from dataclasses import dataclass
 from itertools import repeat
 from typing import TYPE_CHECKING, Any, Iterable, cast
 
-import dist_util.ops as dist_ops
 import torch
 import torch.nn as nn
-from dist_util.ops import apply_to_collection
 from torch.distributed._composable.replicate import DDP as DDPModule
 from torch.distributed.checkpoint.state_dict import (
     get_optimizer_state_dict,
@@ -23,6 +21,8 @@ from typing_extensions import override
 
 from dream_trainer.configs.trainer import TrainingParameters
 from dream_trainer.utils import logger
+from dream_trainer.utils.dist import ops as dist_ops
+from dream_trainer.utils.dist.ops import apply_to_collection
 from dream_trainer.utils.common import seed_everything, stacked_context
 from dream_trainer.utils.dataloader import (
     Batch,

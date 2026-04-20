@@ -9,7 +9,6 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "dist-util==0.1.0",
     "loguru>=0.7.3",
     "torch>=2.7.1",
     "tqdm>=4.67.1",
@@ -55,9 +54,6 @@ line-length = 96
 indent-width = 4
 lint.dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 lint.ignore = ["F722", "E731", "F821", "E741"]
-
-[tool.uv.sources]
-dist-util = { workspace = true }
 
 [tool.uv.extra-build-dependencies]
 torchft = ["maturin"]
