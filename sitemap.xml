@@ -2,114 +2,182 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://dream3d.ai/trainer/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api-reference-example/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <loc>https://dream3d.ai/trainer/agents/</loc>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/callbacks/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/configuration-mastery/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <loc>https://dream3d.ai/trainer/checkpointing/</loc>
+         <lastmod>2026-04-20</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/cli/</loc>
+         <lastmod>2026-04-20</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/comparison/</loc>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/configuration/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/contributing/</loc>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/core-concepts/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/documentation-roadmap/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <loc>https://dream3d.ai/trainer/debugging/</loc>
+         <lastmod>2026-04-20</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/design-philosophy/</loc>
+         <lastmod>2026-04-20</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/faq/</loc>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/getting-started/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/installation/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/logging-metrics/</loc>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/parallelism/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/performance/</loc>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/trainer-guide/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/troubleshooting/</loc>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/api/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/api/callbacks/base/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/api/callbacks/checkpoint/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/callbacks/monitoring/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <loc>https://dream3d.ai/trainer/api/callbacks/logging/</loc>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/api/callbacks/performance/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/api/callbacks/training/</loc>
+         <lastmod>2026-04-20</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/api/configuration/checkpoint/</loc>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/api/configuration/device/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/api/configuration/parameters/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/api/configuration/training/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/api/mixins/eval_metric/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/api/mixins/loggers/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/api/mixins/quantize/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/api/mixins/setup/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/api/trainers/abstract/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/api/trainers/base/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/api/trainers/dream/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/utilities/data/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <loc>https://dream3d.ai/trainer/api/utilities/cli/</loc>
+         <lastmod>2026-04-20</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/api/utilities/common/</loc>
+         <lastmod>2026-04-20</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/api/utilities/dist/</loc>
+         <lastmod>2026-04-20</lastmod>
     </url>
     <url>
          <loc>https://dream3d.ai/trainer/api/utilities/world/</loc>
-         <lastmod>2025-07-16</lastmod>
+         <lastmod>2026-04-20</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/tutorials/custom-components/</loc>
+         <lastmod>2026-04-20</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/tutorials/first-trainer/</loc>
+         <lastmod>2026-04-20</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/tutorials/fsdp/</loc>
+         <lastmod>2026-04-20</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/tutorials/multi-gpu/</loc>
+         <lastmod>2026-04-20</lastmod>
+    </url>
+    <url>
+         <loc>https://dream3d.ai/trainer/tutorials/production/</loc>
+         <lastmod>2026-04-20</lastmod>
     </url>
 </urlset>
