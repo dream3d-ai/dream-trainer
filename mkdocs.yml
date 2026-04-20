@@ -58,6 +58,7 @@ nav:
           - Checkpointing: api/configuration/checkpoint.md
       - Utilities:
           - Distributed World: api/utilities/world.md
+          - Distributed Helpers: api/utilities/dist.md
           - Common Utilities: api/utilities/common.md
           - CLI: api/utilities/cli.md
 

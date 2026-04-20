@@ -33,7 +33,7 @@ from dream_trainer.utils.entrypoint import entrypoint
 | [Mixins](mixins/setup.md) | Setup, metrics, logging, quantization behavior. | You want to know what `DreamTrainer` is composed of. |
 | [Callbacks](callbacks/base.md) | Lifecycle hooks for checkpointing, logging, performance, debugging, and training extensions. | You're writing or picking a callback. |
 | [Configuration](configuration/parameters.md) | Dataclasses for training, device meshes, logging, checkpointing, and fault tolerance. | You're writing a config. |
-| [Utilities](utilities/world.md) | Distributed world helpers, launch entrypoint, materialization, serialization, common helpers. | You need `self.world.*` fields or the `@entrypoint` decorator. |
+| [Utilities](utilities/world.md) | Distributed world helpers, vendored distributed utilities, launch entrypoint, materialization, serialization, common helpers. | You need `self.world.*`, rank helpers, or the `@entrypoint` decorator. |
 
 ## Design Notes
 
