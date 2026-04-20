@@ -1,659 +1,317 @@
-# Getting Started with Dream Trainer
+# Quick Start
 
-Welcome to Dream Trainer! This guide will help you understand what makes Dream Trainer unique and get you training models with advanced parallelism in minutes.
+!!! abstract "TL;DR"
+    - Define a `DreamTrainerConfig` subclass with the knobs for your run.
+    - Subclass `DreamTrainer` and implement 8 hooks: `configure_models`, `init_weights`, `model_state_dict`, `configure_optimizers`, `configure_dataloaders`, `configure_metrics`, `training_step`, `validation_step`.
+    - Wrap `main()` with `@entrypoint` and call `trainer.fit()`.
 
-## Why Dream Trainer?
+This guide builds the smallest useful Dream Trainer training script: a synthetic regression dataset, a tiny MLP, metrics, callbacks, and the distributed `entrypoint` launcher. It follows the same shape a production trainer uses — define a config, define a trainer, implement the setup hooks, then call `trainer.fit()`.
 
-Before we dive in, let's understand what makes Dream Trainer different:
 
-### 🧩 **Composable Mixin Architecture**
-Unlike monolithic frameworks, Dream Trainer lets you compose exactly the features you need:
+## Install
 
-```python
-# Minimal trainer - just the essentials
-class SimpleTrainer(BaseTrainer, SetupMixin):
-    pass
+Follow the full environment guidance in [Installation](installation.md). For the current package shape, install the metric and WandB extras even if this first run disables WandB logging:
 
-# Add features as needed
-class ProductionTrainer(BaseTrainer, SetupMixin, WandBLoggerMixin, 
-                       EvalMetricMixin, QuantizeMixin):
-    pass  # Now with logging, metrics, and quantization!
-```
+=== "pip"
 
-### 🚀 **DTensor-Native from Day One**
-Every parameter in Dream Trainer is a DTensor, giving you:
-- Automatic support for new PyTorch sharding patterns
-- Clean, debuggable distributed code
-- First-class support for TP, PP, CP, and FSDP2
+    ```bash
+    pip install "dream-trainer[metrics,wandb]"
+    ```
 
-### ⚡ **Zero-Compromise Performance**
-- Intelligent FSDP prefetching that traces execution order
-- Loss parallelism for tensor-parallel training
-- Async tensor parallelism support
-- Compiled autograd integration
+=== "uv"
 
-### 📝 **Configs as Code for Type Safety**
-Dream Trainer embraces Python configs over YAML/JSON for better developer experience:
+    ```bash
+    uv add "dream-trainer[metrics,wandb]"
+    ```
 
-```python
-# ❌ Traditional approach - error-prone strings
-config = {
-    "model": "gpt2",  # Typo? Wrong name? Who knows!
-    "lr": "3e-4",     # String or float? 
-    "layers": 12,     # Is this valid for gpt2?
-}
-
-# ✅ Dream Trainer - full type safety and IDE support
-@dataclass
-class MyConfig(BaseTrainerConfig):
-    learning_rate: float = 3e-4  # Type-checked!
-    num_layers: int = 12         # Auto-completion!
-    
-    def validate(self):
-        """Custom validation logic"""
-        if self.num_layers < 1:
-            raise ValueError("Need at least 1 layer!")
-```
-
-Benefits of configs as code:
-- **Type Safety**: Catch config errors at definition time, not runtime
-- **IDE Support**: Auto-completion, refactoring, and go-to-definition
-- **Composability**: Use functions, inheritance, and composition
-- **Validation**: Add custom validation logic and constraints
-- **Documentation**: Docstrings and type hints document themselves
-
-```python
-# Example: Composable configs with validation
-def make_model_config(size: Literal["small", "base", "large"]) -> ModelConfig:
-    """Factory function for common model sizes"""
-    sizes = {
-        "small": ModelConfig(hidden_size=768, num_layers=12),
-        "base": ModelConfig(hidden_size=1024, num_layers=24),
-        "large": ModelConfig(hidden_size=1536, num_layers=48),
-    }
-    return sizes[size]
-
-# Use partial functions for complex configs
-from functools import partial
-
-config = TrainerConfig(
-    model=partial(TransformerModel, num_heads=16),
-    optimizer=partial(torch.optim.AdamW, betas=(0.9, 0.95)),
-    scheduler=make_cosine_scheduler(warmup_steps=1000),
-)
-```
-
-## Installation
-
-To get started with Dream Trainer:
+Run the script with the single-device debug config:
 
 ```bash
-pip install dream-trainer
+CUDA_VISIBLE_DEVICES=0 python quickstart.py
 ```
 
-For detailed installation instructions, including:
-- System requirements and CUDA compatibility
-- Feature-specific installations (wandb, metrics, quantization, etc.)
-- Development setup
-- Docker and cluster deployments
-- Troubleshooting common issues
+!!! warning "One rank only"
+    This quick start uses `DeviceParameters.SINGLE_DEVICE()`. Keep the launch to a single rank; the distributed story starts in [Tutorial 2 — Scaling Meteor](tutorials/multi-gpu.md).
 
-Please see our comprehensive [Installation Guide](installation.md).
-
-## Your First Trainer
-
-Let's build a trainer that showcases Dream Trainer's strengths:
-
-### Step 1: Understanding the Mixin Pattern
-
-Dream Trainer uses mixins to compose functionality. Here's the anatomy:
-
-```python
-from dataclasses import dataclass
-from dream_trainer import BaseTrainer, BaseTrainerConfig
-from dream_trainer.trainer.mixins import SetupMixin, SetupConfigMixin
-
-# 1. Configuration uses the same mixin pattern
-@dataclass
-class MyTrainerConfig(BaseTrainerConfig, SetupConfigMixin):
-    # BaseTrainerConfig provides: epochs, batch_size, etc.
-    # SetupConfigMixin adds: model/optimizer/dataloader configs
-    learning_rate: float = 3e-4
-    hidden_size: int = 768
-    
-# 2. Trainer mirrors the config structure
-class MyTrainer(BaseTrainer, SetupMixin):
-    config: MyTrainerConfig
-    
-    # SetupMixin requires these methods:
-    def configure_models(self):
-        """Define your models (on meta device - no memory used!)"""
-        self.model = TransformerModel(self.config.hidden_size)
-    
-    def init_weights(self):
-        """Initialize weights after parallelism is applied"""
-        self.model.apply(self._init_weights)
-    
-    def configure_optimizers(self):
-        """Define optimizers"""
-        self.optimizer = torch.optim.AdamW(
-            self.model.parameters(),
-            lr=self.config.learning_rate
-        )
-    
-    def configure_dataloaders(self):
-        """Return train and validation dataloaders"""
-        return self._make_train_loader(), self._make_val_loader()
-    
-    # BaseTrainer requires these methods:
-    def training_step(self, batch, batch_idx):
-        """Your forward pass and loss computation"""
-        loss = self.model(batch)
-        self.backward(loss)  # Handles gradient accumulation!
-        
-        if not self.is_accumulating_gradients:
-            grad_norm = self.step(self.model, self.optimizer)
-            return {"loss": loss, "grad_norm": grad_norm}
-        
-        return {"loss": loss}
-    
-    def validation_step(self, batch, batch_idx):
-        """Validation forward pass"""
-        with torch.no_grad():
-            loss = self.model(batch)
-        return {"val_loss": loss}
-```
-
-### Step 2: Add Advanced Parallelism
-
-Here's where Dream Trainer shines - adding parallelism is simple:
-
-```python
-from dream_trainer.configs import DeviceParameters
-
-# Configure parallelism declaratively
-config = MyTrainerConfig(
-    device_parameters=DeviceParameters(
-        # Data parallelism
-        dp_shard=4,           # FSDP2 across 4 devices
-        dp_replicate=2,       # DDP across 2 nodes (HSDP)
-        
-        # Model parallelism  
-        tensor_parallel=4,    # Tensor parallel degree
-        pipeline_parallel=2,  # Pipeline stages
-        context_parallel=2,   # For long sequences
-        
-        # Optimizations
-        async_tensor_parallel=True,
-        compile_model=True,
-        loss_parallel=True,
-    )
-)
-
-# That's it! Dream Trainer handles all the complexity
-```
-
-### Step 3: Implement Parallelism Methods
-
-For advanced parallelism, implement these methods in your trainer:
-
-```python
-class MyTrainer(BaseTrainer, SetupMixin):
-    # ... previous methods ...
-    
-    def apply_tensor_parallel(self, tp_mesh):
-        """Apply tensor parallelism to your model"""
-        # Dream Trainer provides the mesh, you decide the sharding
-        from torch.distributed.tensor.parallel import ColwiseParallel, RowwiseParallel
-        
-        # Parallelize attention layers
-        for layer in self.model.layers:
-            tp_plan = {
-                "attention.wq": ColwiseParallel(),
-                "attention.wk": ColwiseParallel(), 
-                "attention.wv": ColwiseParallel(),
-                "attention.wo": RowwiseParallel(),
-            }
-            parallelize_module(layer, tp_mesh, tp_plan)
-    
-    def apply_pipeline_parallel(self, pp_mesh):
-        """Split model into pipeline stages"""
-        # Return pipeline schedule and split modules
-        stages = [
-            self.model.embed,
-            self.model.layers[:8],
-            self.model.layers[8:16],
-            self.model.output
-        ]
-        
-        from torch.distributed.pipelining import pipeline_parallel
-        schedule = pipeline_parallel(stages, pp_mesh)
-        
-        return {"model": (schedule, stages, True, True)}
-    
-    def apply_fully_shard(self, fsdp_config):
-        """Apply FSDP2 sharding"""
-        from torch.distributed._composable.fsdp import fully_shard
-        
-        # Shard each transformer layer
-        for layer in self.model.layers:
-            fully_shard(layer, **fsdp_config)
-        
-        # Shard the whole model
-        fully_shard(self.model, **fsdp_config)
-```
-
-## Complete Example: Multi-GPU Language Model
-
-Let's put it all together with a realistic example:
+## A complete `quickstart.py`
 
 ```python
 from dataclasses import dataclass, field
+from typing import Any, Iterable
+
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from torch.distributed.checkpoint.state_dict import StateDictOptions, get_model_state_dict
+from torch.utils.data import DataLoader, Dataset
+from torchmetrics import MeanSquaredError, MetricCollection
 
-from dream_trainer import DreamTrainer, DreamTrainerConfig
-from dream_trainer.callbacks import (
-    LoggerCallback, 
-    CheckpointCallback,
-    OptimizeFSDP,
-    CallbackCollection
-)
-from dream_trainer.configs import (
-    DeviceParameters,
-    CheckpointParameters,
-    TrainingParameters
-)
+from dream_trainer import DreamTrainer, DreamTrainerConfig, callbacks
+from dream_trainer.configs import DeviceParameters, TrainingParameters, WandbLoggingParameters
+from dream_trainer.utils.entrypoint import entrypoint
 
-@dataclass
-class LMConfig(DreamTrainerConfig):
-    # Model architecture
-    vocab_size: int = 50257
-    hidden_size: int = 768
-    num_layers: int = 12
-    num_heads: int = 12
-    
-    # Training
-    learning_rate: float = 3e-4
-    warmup_steps: int = 1000
-    weight_decay: float = 0.1
-    
-    # Data
-    sequence_length: int = 2048
-    dataset_path: str = "data/openwebtext"
 
-class LanguageModelTrainer(DreamTrainer):
-    config: LMConfig
-    
-    def configure_models(self):
-        """Models are created on meta device - no memory used!"""
-        from my_models import GPTModel
-        
-        self.model = GPTModel(
-            vocab_size=self.config.vocab_size,
-            hidden_size=self.config.hidden_size,
-            num_layers=self.config.num_layers,
-            num_heads=self.config.num_heads,
+class RegressionDataset(Dataset):
+    def __init__(self, *, n_samples: int, input_dim: int, seed: int):
+        # Keep the dataset deterministic so the quick start behaves the same
+        # each time you run it.
+        generator = torch.Generator().manual_seed(seed)
+        self.x = torch.randn(n_samples, input_dim, generator=generator)
+        weights = torch.randn(input_dim, 1, generator=generator)
+        bias = torch.randn(1, generator=generator)
+        noise = 0.05 * torch.randn(n_samples, 1, generator=generator)
+        self.y = self.x @ weights + bias + noise
+
+    def __len__(self) -> int:
+        # Dream Trainer uses dataloader length to infer epoch length when
+        # train_steps_per_epoch or val_steps_per_epoch is not provided.
+        return self.x.shape[0]
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        # Batches are dictionaries because training_step receives the batch
+        # exactly as the dataloader yields it.
+        return {"x": self.x[idx], "y": self.y[idx]}
+
+
+@dataclass(kw_only=True)
+class ToyTrainerConfig(DreamTrainerConfig):
+    input_dim: int = 16
+    hidden_dim: int = 64
+    learning_rate: float = 1e-3
+    batch_size: int = 32
+    metrics: MetricCollection = field(
+        default_factory=lambda: MetricCollection({"mse": MeanSquaredError()})
+    )
+
+
+class ToyTrainer(DreamTrainer):
+    config: ToyTrainerConfig
+
+    def configure_models(self) -> None:
+        # Dream Trainer calls configure_models under a meta-device context.
+        # Define module structure here, but do not load weights or rely on
+        # allocated parameter storage yet.
+        self.model = nn.Sequential(
+            nn.Linear(self.config.input_dim, self.config.hidden_dim),
+            nn.SiLU(),
+            nn.Linear(self.config.hidden_dim, 1),
         )
-    
-    def init_weights(self):
-        """Initialize after parallelism is applied"""
-        def _init_weights(module):
+
+    def init_weights(self) -> None:
+        # Models are materialized after configure_models. Initialize weights,
+        # load pretrained checkpoints, or run custom init here because tensors
+        # now have real storage on the training device.
+        for module in self.model.modules():
             if isinstance(module, nn.Linear):
-                torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-                if module.bias is not None:
-                    torch.nn.init.zeros_(module.bias)
-        
-        self.model.apply(_init_weights)
-    
-    def configure_optimizers(self):
-        """Configure AdamW with weight decay"""
-        # Separate parameters for weight decay
-        decay_params = []
-        no_decay_params = []
-        
-        for name, param in self.model.named_parameters():
-            if 'bias' in name or 'norm' in name:
-                no_decay_params.append(param)
-            else:
-                decay_params.append(param)
-        
-        self.optimizer = torch.optim.AdamW([
-            {'params': decay_params, 'weight_decay': self.config.weight_decay},
-            {'params': no_decay_params, 'weight_decay': 0.0}
-        ], lr=self.config.learning_rate)
-    
-    def configure_schedulers(self):
-        """Cosine schedule with warmup"""
-        from torch.optim.lr_scheduler import CosineAnnealingLR
-        
-        self.scheduler = CosineAnnealingLR(
-            self.optimizer,
-            T_max=self.config.training_parameters.n_epochs,
-            eta_min=self.config.learning_rate * 0.1
-        )
-    
-    def configure_dataloaders(self):
-        """Create distributed dataloaders"""
-        from my_data import TextDataset
-        
-        train_dataset = TextDataset(
-            self.config.dataset_path,
-            sequence_length=self.config.sequence_length,
-            split='train'
-        )
-        
-        # Dream Trainer provides distributed sampling utilities
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=self.config.training_parameters.train_batch_size,
-            sampler=self.get_train_sampler(train_dataset),  # Handles DP/PP
-            num_workers=4,
-            pin_memory=True
-        )
-        
-        val_dataset = TextDataset(
-            self.config.dataset_path,
-            sequence_length=self.config.sequence_length,
-            split='validation'
-        )
-        
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size=self.config.training_parameters.train_batch_size * 2,
-            sampler=self.get_val_sampler(val_dataset),
-            num_workers=4,
-            pin_memory=True
-        )
-        
-        return train_loader, val_loader
-    
-    def training_step(self, batch, batch_idx):
-        """Forward pass with next-token prediction"""
-        input_ids = batch['input_ids']
-        
-        # Forward pass
-        logits = self.model(input_ids)
-        
-        # Shift for next-token prediction
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = input_ids[..., 1:].contiguous()
-        
-        # Loss computation with optional loss parallelism
-        with self.loss_parallel():
-            loss = F.cross_entropy(
-                shift_logits.view(-1, shift_logits.size(-1)),
-                shift_labels.view(-1)
-            )
-        
-        # Backward handles gradient accumulation automatically
-        self.backward(loss)
-        
-        # Step optimizer only when not accumulating
-        if not self.is_accumulating_gradients:
-            grad_norm = self.step(self.model, self.optimizer)
-            
-            return {
-                "loss": loss,
-                "grad_norm": grad_norm,
-                "learning_rate": self.optimizer.param_groups[0]['lr'],
-            }
-        
-        return {"loss": loss}
-    
-    def validation_step(self, batch, batch_idx):
-        """Compute validation perplexity"""
-        input_ids = batch['input_ids']
-        
-        with torch.no_grad():
-            logits = self.model(input_ids)
-            
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = input_ids[..., 1:].contiguous()
-            
-            loss = F.cross_entropy(
-                shift_logits.view(-1, shift_logits.size(-1)),
-                shift_labels.view(-1)
-            )
-            
-            perplexity = torch.exp(loss)
-        
-        return {
-            "val_loss": loss,
-            "val_perplexity": perplexity,
-        }
-    
-    def apply_tensor_parallel(self, tp_mesh):
-        """Apply tensor parallelism to transformer layers"""
-        from torch.distributed.tensor.parallel import (
-            ColwiseParallel, 
-            RowwiseParallel,
-            PrepareModuleInput,
-            parallelize_module
-        )
-        
-        # Parallelize each transformer block
-        for i, block in enumerate(self.model.blocks):
-            layer_plan = {
-                # Attention
-                "attn.q_proj": ColwiseParallel(),
-                "attn.k_proj": ColwiseParallel(), 
-                "attn.v_proj": ColwiseParallel(),
-                "attn.out_proj": RowwiseParallel(),
-                
-                # MLP
-                "mlp.up_proj": ColwiseParallel(),
-                "mlp.down_proj": RowwiseParallel(),
-            }
-            
-            parallelize_module(
-                block,
-                tp_mesh,
-                layer_plan,
-                input_fn=PrepareModuleInput(),
-            )
+                nn.init.xavier_uniform_(module.weight)
+                nn.init.zeros_(module.bias)
 
-# Create configuration with advanced features
-config = LMConfig(
-    # Distributed settings
-    device_parameters=DeviceParameters(
-        dp_shard=4,              # 4-way FSDP2
-        tensor_parallel=2,       # 2-way tensor parallelism
-        compile_model=True,      # torch.compile
-        enable_compiled_autograd=True,
-        loss_parallel=True,      # Parallel loss computation
-    ),
-    
-    # Training settings
-    training_parameters=TrainingParameters(
-        n_epochs=10,
-        train_batch_size=8,
-        gradient_accumulation_steps=4,  # Effective batch = 32
-        gradient_clip_val=1.0,
-        val_frequency=0.25,  # Validate 4x per epoch
-    ),
-    
-    # Callbacks for production features
-    callbacks=CallbackCollection([
-        LoggerCallback(log_every_n_train_batches=10),
-        CheckpointCallback(
-            CheckpointParameters(
-                checkpoint_every_n_epochs=1,
-                keep_top_k=3,
-                monitor="val_perplexity",
-            )
+    def model_state_dict(self, **_: Any) -> dict[str, Any]:
+        # Checkpoint callbacks call trainer.state_dict(), which delegates model
+        # state collection to this method. Use PyTorch DCP helpers so the same
+        # code works for local and distributed model states.
+        return {"model": get_model_state_dict(self.model, options=StateDictOptions())}
+
+    def configure_optimizers(self) -> dict[nn.Module, torch.optim.Optimizer]:
+        # Optimizers are created after model setup, so they see the materialized
+        # parameters Dream Trainer will train.
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=self.config.learning_rate,
+        )
+        # Returning the model-to-optimizer mapping lets Dream Trainer restore
+        # optimizer state and associate schedulers with the right model.
+        return {self.model: self.optimizer}
+
+    def configure_dataloaders(self) -> tuple[Iterable, Iterable]:
+        # Build dataloaders after the distributed world exists. In production,
+        # pass self.world.dp_rank and self.world.dp_size into sharded dataloader
+        # factories here.
+        train_dataset = RegressionDataset(
+            n_samples=2048,
+            input_dim=self.config.input_dim,
+            seed=0,
+        )
+        val_dataset = RegressionDataset(
+            n_samples=512,
+            input_dim=self.config.input_dim,
+            seed=1,
+        )
+        return (
+            DataLoader(train_dataset, batch_size=self.config.batch_size, shuffle=True),
+            DataLoader(val_dataset, batch_size=self.config.batch_size),
+        )
+
+    def configure_metrics(self) -> None:
+        # Metrics assigned as trainer attributes are auto-tracked, moved to the
+        # trainer device, reset before validation, and computed after validation.
+        self.metrics = self.config.metrics
+
+    def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> dict[str, Any]:
+        # training_step owns the experiment-specific forward pass and loss.
+        # Dream Trainer wraps the call with the training context and callbacks.
+        pred = self.model(batch["x"])
+        loss = F.mse_loss(pred, batch["y"])
+
+        # Use self.backward instead of loss.backward directly so gradient
+        # accumulation scaling stays consistent with TrainingParameters.
+        self.backward(loss)
+
+        logs: dict[str, Any] = {"train/loss": loss}
+        if not self.is_accumulating_gradients:
+            # self.step handles gradient validation, gradient clipping,
+            # optimizer.step(), optimizer.zero_grad(), scheduler stepping, and
+            # optimizer callbacks.
+            logs["train/grad_norm"] = self.step(self.optimizer)
+
+        # Scalar tensors returned here can be consumed by logger callbacks.
+        return logs
+
+    @torch.no_grad()
+    def validation_step(
+        self,
+        batch: dict[str, torch.Tensor],
+        batch_idx: int,
+    ) -> dict[str, Any]:
+        # validation_step runs with gradients disabled by the trainer loop.
+        # Update metrics here and return any scalar logs for callbacks.
+        pred = self.model(batch["x"])
+        loss = F.mse_loss(pred, batch["y"])
+        self.metrics.update(pred, batch["y"])
+        return {"val/loss": loss}
+
+
+@entrypoint
+def main() -> None:
+    # entrypoint creates a local distributed environment when one is not
+    # already provided by torchrun or a cluster launcher.
+    config = ToyTrainerConfig(
+        project="dream-trainer-quickstart",
+        group="local",
+        # Disable compile in the first example so the trainer does not need an
+        # apply_compile hook yet.
+        device_parameters=DeviceParameters.SINGLE_DEVICE(compile_model=False),
+        training_parameters=TrainingParameters(
+            n_epochs=2,
+            train_steps_per_epoch=32,
+            val_steps_per_epoch=8,
+            num_sanity_val_steps=2,
+            gradient_clip_val=1.0,
         ),
-        OptimizeFSDP(prefetch=2),  # Intelligent FSDP prefetching
-    ])
-)
+        # WandB is installed for today's DreamTrainer import path, but disabled
+        # so the quick start runs without networked experiment logging.
+        logging_parameters=WandbLoggingParameters(enabled=False),
+        callbacks=callbacks.CallbackCollection(
+            [
+                # LoggerCallback records scalar values returned by
+                # training_step and validation_step.
+                callbacks.LoggerCallback(log_every_n_train_batches=1),
+                # ProgressBar displays local training progress and the chosen
+                # scalar metric.
+                callbacks.ProgressBar(metric="train/loss"),
+            ]
+        ),
+    )
+
+    # The trainer owns lifecycle orchestration; fit() launches configure,
+    # setup, sanity validation, training, validation, callbacks, and teardown.
+    ToyTrainer(config).fit()
+
 
 if __name__ == "__main__":
-    # Dream Trainer handles distributed launch automatically
-    from dream_trainer.utils import distributed_launch
-    
-    def main():
-        trainer = LanguageModelTrainer(config)
-        trainer.fit()
-    
-    distributed_launch(main)
+    main()
 ```
 
-## Launch Training
-
-### Single GPU
-```bash
-python train.py
-```
-
-### Multiple GPUs (Single Node)
-```bash
-# Dream Trainer auto-detects available GPUs
-python train.py
-
-# Or explicitly with torchrun
-torchrun --nproc_per_node=8 train.py
-```
-
-### Multiple Nodes
-```bash
-# Node 0
-torchrun --nproc_per_node=8 --nnodes=2 --node_rank=0 \
-    --master_addr=$MASTER_ADDR --master_port=29500 train.py
-
-# Node 1  
-torchrun --nproc_per_node=8 --nnodes=2 --node_rank=1 \
-    --master_addr=$MASTER_ADDR --master_port=29500 train.py
-```
-
-## Understanding Dream Trainer's Advantages
-
-### 1. **Clean Parallelism Abstractions**
-
-Dream Trainer makes complex parallelism approachable:
-
-```python
-# Bad (Raw PyTorch)
-if rank == 0:
-    model = model.cuda(0)
-    # Complex manual sharding...
-    
-# Good (Dream Trainer)
-def apply_tensor_parallel(self, tp_mesh):
-    # Clean, reusable parallelism logic
-```
-
-### 2. **Automatic Mixed Precision**
-
-Dream Trainer wraps forward methods intelligently:
-
-```python
-# Automatic - Dream Trainer handles autocast placement
-def training_step(self, batch, batch_idx):
-    loss = self.model(batch)  # Autocast applied automatically
-    
-# No need for manual autocast contexts!
-```
-
-### 3. **Gradient Accumulation That Just Works**
-
-```python
-# Dream Trainer handles the complexity
-self.backward(loss)  # Scales by accumulation steps
-
-if not self.is_accumulating_gradients:
-    # Only step when ready
-    self.step(self.model, self.optimizer)
-```
-
-### 4. **Composable Features**
-
-Add features without modifying your core trainer:
-
-```python
-# Start simple
-class V1Trainer(BaseTrainer, SetupMixin):
-    pass
-
-# Add metrics later
-class V2Trainer(BaseTrainer, SetupMixin, EvalMetricMixin):
-    def configure_metrics(self):
-        self.accuracy = Accuracy()
-
-# Add logging even later
-class V3Trainer(BaseTrainer, SetupMixin, EvalMetricMixin, WandBLoggerMixin):
-    pass  # No changes to existing code!
-```
-
-## Common Patterns
-
-### Adding Custom Callbacks
-
-```python
-from dream_trainer.callbacks import Callback
-
-class LearningRateWarmup(Callback[SetupMixin]):
-    def __init__(self, warmup_steps: int):
-        self.warmup_steps = warmup_steps
-    
-    def post_train_step(self, result, batch_idx):
-        if self.trainer.global_step < self.warmup_steps:
-            # Linear warmup
-            lr_scale = self.trainer.global_step / self.warmup_steps
-            for param_group in self.trainer.optimizer.param_groups:
-                param_group['lr'] = param_group['initial_lr'] * lr_scale
-```
-
-### Debugging Distributed Training
-
-```python
-# Dream Trainer provides utilities for distributed debugging
-from dream_trainer.utils import rank_zero_print
-
-class MyTrainer(DreamTrainer):
-    def training_step(self, batch, batch_idx):
-        # Only prints from rank 0
-        rank_zero_print(f"Batch shape: {batch['input_ids'].shape}")
-        
-        # Check DTensor sharding
-        if hasattr(self.model.weight, 'placements'):
-            rank_zero_print(f"Weight sharding: {self.model.weight.placements}")
-```
-
-## Next Steps
-
-Now that you understand Dream Trainer's core concepts:
-
-1. **Explore Mixins**: Check out the [Trainer Guide](trainer-guide.md) to see all available mixins
-2. **Master Parallelism**: Read the [Parallelism Guide](parallelism.md) for advanced distributed training
-3. **Extend with Callbacks**: Learn to create custom callbacks in the [Callbacks Guide](callbacks.md)
-4. **Optimize Performance**: See [Best Practices](best-practices.md) for performance tips
-
-## Troubleshooting
-
-### Installation Issues
+Run it:
 
 ```bash
-# Check CUDA compatibility
-python -c "import torch; print(torch.cuda.is_available())"
-
-# Verify Dream Trainer features
-python -c "from dream_trainer.utils import check_features; check_features()"
+CUDA_VISIBLE_DEVICES=0 python quickstart.py
 ```
 
-### Common Issues
+!!! tip "What you'll see"
+    Dream Trainer initializes a single-process distributed world, runs two sanity validation batches, trains for two epochs, runs validation, and reports progress for `train/loss`.
 
-1. **OOM with Large Models**: Enable CPU offloading or use gradient checkpointing
-2. **Slow Data Loading**: Increase `num_workers` and use `pin_memory=True`
-3. **Debugging Distributed**: Set `TORCH_CPP_LOG_LEVEL=INFO` for detailed logs
+## What the hooks do
 
-## Getting Help
+For the deeper lifecycle model behind these hooks, read [Core Concepts](core-concepts.md).
 
-- 📚 [Full Documentation](index.md)
-- 💬 [GitHub Discussions](https://github.com/dream-trainer/dream-trainer/discussions)
-- 🐛 [Issue Tracker](https://github.com/dream-trainer/dream-trainer/issues)
-- 💡 [Examples Repository](https://github.com/dream-trainer/dream-trainer/tree/main/examples)
+| Hook | Purpose |
+| --- | --- |
+| `configure_models` | Instantiate modules. Dream Trainer calls this under a meta-device context so large models can be configured before materialization. |
+| `init_weights` | Initialize parameters after Dream Trainer materializes the model on the training device. |
+| `model_state_dict` | Define the model state that distributed checkpointing should save and load. |
+| `configure_optimizers` | Create optimizers after model setup, then return the model-to-optimizer mapping. |
+| `configure_dataloaders` | Return train and validation iterables. In distributed runs, this is where production code passes `rank=self.world.dp_rank` and `world_size=self.world.dp_size` into dataloader factories. |
+| `configure_metrics` | Register metric collections as trainer attributes so Dream Trainer can move and reset them. |
+| `training_step` | Compute the loss, call `self.backward(loss)`, and call `self.step(self.optimizer)` when gradient accumulation is complete. |
+| `validation_step` | Run evaluation logic, update metrics, and return scalar validation logs. |
 
----
+## Why the example disables compile
 
-**Ready to train with Dream Trainer?** You now understand what makes it unique. Happy training! 🚀
+`DeviceParameters.SINGLE_DEVICE(compile_model=False)` keeps the first script focused on the trainer lifecycle. If `compile_model=True`, Dream Trainer calls `apply_compile`, and your trainer must implement that hook.
+
+```python
+def apply_compile(self):
+    self.model.compile(mode="max-autotune-no-cudagraphs", dynamic=False)
+```
+
+!!! info "The same pattern applies to parallelism"
+    When you switch to DDP, FSDP, TP, or PP, Dream Trainer calls explicit hooks: `apply_replicate`, `apply_fully_shard`, `apply_tensor_parallel`, `apply_pipeline_parallel`. You implement only the hooks relevant to the parallelism dimensions you enable.
+
+## Optional: upgrade to the CLI
+
+`@entrypoint` is the simplest launcher. If you want subcommands (`benchmark`, `profile`, `summarize`, `find-graph-breaks`) or flags like `--resume` / `--init-from` without editing code, swap in `cli()`:
+
+```bash
+pip install "dream-trainer[cli]"
+```
+
+```python
+from dream_trainer.utils.cli import cli
+
+
+def main(config: ToyTrainerConfig) -> None:
+    ToyTrainer(config).fit()
+
+
+if __name__ == "__main__":
+    cli(main, ToyTrainerConfig(...))
+```
+
+```bash
+python quickstart.py --help              # list every subcommand and modifier flag
+python quickstart.py --cfg               # print the resolved config and exit
+python quickstart.py --no-compile        # flip a built-in modifier for one run
+python quickstart.py profile --skip 5    # run the trainer under torch.profiler
+```
+
+`cli()` wraps `main` with `@entrypoint` internally, so the distributed setup is identical. See [Using the CLI](cli.md) for the full surface.
+
+## From quick start to production
+
+Production trainers use the same skeleton with richer components:
+
+| Change | Why |
+| --- | --- |
+| Split `config.py` and `train.py` | Keeps experiment configuration reviewable and separate from lifecycle code. |
+| Store factories on the config | Makes model/optimizer/scheduler/metric choices explicit per-run. |
+| Config-backed dataloaders with `rank` and `world_size` | Required for sharded data parallelism. |
+| Swap `SINGLE_DEVICE()` → `DDP()` / `FSDP()` / `HSDP(...)` | Dream Trainer calls the parallelism hooks your `DeviceParameters` enables. |
+| Add production callbacks | Checkpointing, logging, profiling, FP8, EMA, fault tolerance. |
+
+A production callback collection commonly grows into something like:
+
+```python
+callbacks=callbacks.CallbackCollection(
+    [
+        callbacks.TrainerSummary(),
+        callbacks.LoggerCallback(code_dir="../"),
+        callbacks.LRLoggerCallback(),
+        callbacks.ProgressBar(metric="train/loss"),
+        callbacks.CheckpointCallback(...),
+    ]
+)
+```
+
+!!! tip "The control flow never changes"
+    The model and data change. The control flow stays familiar: config object, trainer class, setup hooks, step hooks, and `trainer.fit()`. That continuity is the payoff for the lifecycle discipline.

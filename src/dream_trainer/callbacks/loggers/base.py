@@ -30,7 +30,7 @@ class LoggerCallback(RankZeroCallback[LoggerMixin]):
         self,
         log_every_n_train_batches: int | None = 8,
         log_every_n_val_batches: int | None = None,
-        code_dir: str = "./",
+        code_dir: str | None = None,
     ):
         """Initialize the logger callback.
 
@@ -53,9 +53,10 @@ class LoggerCallback(RankZeroCallback[LoggerMixin]):
 
     @override
     def pre_fit(self):
-        self.trainer.log_code(
-            self.code_dir, gitignore_path=os.path.join(self.code_dir, ".gitignore")
-        )
+        if self.code_dir is not None:
+            self.trainer.log_code(
+                self.code_dir, gitignore_path=os.path.join(self.code_dir, ".gitignore")
+            )
 
     @override
     def post_train_step(self, result: dict[str, torch.Tensor | int | float], batch_idx: int):

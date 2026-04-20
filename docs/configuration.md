@@ -1,578 +1,426 @@
-# Configuration Guide
+---
+title: Configuration
+---
 
-This guide explains all configuration options available in Dream Trainer.
+# Configuration
 
-## Table of Contents
+<small>🛠️ How-to · ~12 min read · copy-paste friendly</small>
 
-- [Configuration Philosophy: Code Over YAML](#configuration-philosophy-code-over-yaml)
-- [Basic Configuration](#basic-configuration)
-- [Device Parameters](#device-parameters)
-- [Training Parameters](#training-parameters)
-- [Checkpoint Parameters](#checkpoint-parameters)
-- [Logging Parameters](#logging-parameters)
-- [Advanced Configuration](#advanced-configuration)
+!!! abstract "TL;DR"
+    - Configs are **typed Python dataclasses**, not YAML.
+    - **Config describes choices. Trainer hooks perform setup.** Don't construct CUDA tensors or imported models in config defaults.
+    - Organize variants with **named factories** (`debug_config()`, `fsdp_config()`) and compose with `dataclasses.replace`.
+    - **Modifiers** are small functions registered on `MODIFIERS` that mutate a config — auto-surfaced as `--<flag>` options by [the CLI](cli.md#modifiers).
 
-## Configuration Philosophy: Code Over YAML
+Your trainer needs to run in three modes: a fast smoke test on your laptop, a nightly FSDP run on a shared cluster, and a one-off large-scale run when you have a bug to reproduce. The training code shouldn't change between them. What changes is configuration.
 
-Dream Trainer uses Python code for configuration instead of YAML/JSON files. This design choice provides significant advantages:
+Dream Trainer configs are **typed Python dataclasses**, not YAML. This page explains how to structure them, where the boundary between config and trainer hooks sits, and how to organize variants so experiments stay reviewable.
 
-### Why Configs as Code?
+## The Boundary
 
-```python
-# Traditional YAML approach - many pitfalls
-# config.yaml:
-# model:
-#   name: "gpt2-medium"  # Is this string correct?
-#   layers: "24"         # Should this be a string or int?
-#   lr: 0.0003          # Easy to add/remove zeros by mistake
-#   dropout: 0.1
-#   use_flash_attn: yes  # yes, true, True, or 1?
+> **Config describes choices. Trainer hooks perform setup.**
 
-# Dream Trainer approach - type-safe Python code
-from dataclasses import dataclass
-from typing import Literal, Optional
-from dream_trainer import BaseTrainerConfig
+Everything follows from that rule. The config holds dimensions, hyperparameters, paths, and *factories* that know how to build things. The trainer builds them — at the right lifecycle phase, on the right rank, with access to the distributed world.
 
-@dataclass
-class GPT2Config(BaseTrainerConfig):
-    """Configuration for GPT-2 training with full type safety."""
-    
-    # Model architecture - with type hints and validation
-    model_size: Literal["small", "medium", "large", "xl"] = "medium"
-    num_layers: int = 24
-    hidden_size: int = 1024
-    num_heads: int = 16
-    
-    # Training hyperparameters
-    learning_rate: float = 3e-4  # Scientific notation preserved
-    dropout: float = 0.1
-    use_flash_attention: bool = True  # Clear boolean type
-    
-    def __post_init__(self):
-        """Validate configuration consistency."""
-        # Ensure model size matches architecture
-        size_configs = {
-            "small": (12, 768, 12),
-            "medium": (24, 1024, 16),
-            "large": (36, 1280, 20),
-            "xl": (48, 1600, 25)
-        }
-        
-        expected = size_configs[self.model_size]
-        if (self.num_layers, self.hidden_size, self.num_heads) != expected:
-            print(f"Warning: Custom architecture differs from {self.model_size}")
-```
+**Good config fields:**
 
-### Key Benefits
+- dimensions and hyperparameters
+- file paths
+- batch sizes and worker counts
+- dtype, device, and parallelism choices
+- callback parameters
+- small factory objects that build runtime components later
 
-1. **Type Safety and IDE Support**
-   ```python
-   config = GPT2Config(
-       model_size="medium",  # IDE shows valid options
-       learning_rate=3e-4,   # Type-checked as float
-       use_flash_attention=True  # Clear boolean, not string
-   )
-   
-   # IDE provides autocomplete and catches errors
-   config.learning_rate = "high"  # ❌ Type error caught immediately
-   ```
+**Do not put in config defaults:**
 
-2. **Composability with Functions**
-   ```python
-   from functools import partial
-   
-   def create_optimizer_config(model_size: str):
-       """Factory function for optimizer configs based on model size."""
-       base_lr = {"small": 6e-4, "medium": 3e-4, "large": 2.5e-4}
-       return partial(
-           torch.optim.AdamW,
-           lr=base_lr.get(model_size, 3e-4),
-           betas=(0.9, 0.95),
-           weight_decay=0.1
-       )
-   
-   # Use in configuration
-   config = GPT2Config(
-       model_size="large",
-       optimizer=create_optimizer_config("large")
-   )
-   ```
+- constructed CUDA tensors
+- instantiated models
+- opened files or network connections
+- dataloaders that depend on rank or world size
+- optimizer instances tied to unmaterialized parameters
+- any side effect that fires at import time
 
-3. **Dynamic Configuration**
-   ```python
-   import os
-   from pathlib import Path
-   
-   @dataclass
-   class DataConfig(BaseConfig):
-       """Dynamically configured data settings."""
-       
-       # Paths can be computed at runtime
-       data_root: Path = Path(os.environ.get("DATA_ROOT", "./data"))
-       
-       # Conditional configuration
-       batch_size: int = field(default_factory=lambda: 
-           32 if torch.cuda.device_count() <= 4 else 64
-       )
-       
-       # Computed properties
-       @property
-       def train_path(self) -> Path:
-           return self.data_root / "train"
-       
-       @property
-       def val_path(self) -> Path:
-           return self.data_root / "validation"
-   ```
+Dream Trainer creates the distributed world **before** calling setup hooks. Anything that needs rank, device, process group, or materialized parameters belongs in the trainer hook that has that runtime context. If your config module allocates a `torch.zeros(…, device="cuda")` at import time, you've crossed the boundary.
 
-4. **Configuration Inheritance**
-   ```python
-   # Base configuration for all experiments
-   @dataclass
-   class BaseExperimentConfig(DreamTrainerConfig):
-       project: str = "gpt2-experiments"
-       learning_rate: float = 3e-4
-       weight_decay: float = 0.1
-       warmup_steps: int = 1000
-   
-   # Specific experiment configurations
-   @dataclass 
-   class SmallModelConfig(BaseExperimentConfig):
-       """Config for debugging on small model."""
-       model_size: str = "small"
-       batch_size: int = 8
-       learning_rate: float = 6e-4  # Override base
-   
-   @dataclass
-   class ProductionConfig(BaseExperimentConfig):
-       """Config for production training."""
-       model_size: str = "large"
-       batch_size: int = 256
-       compile_model: bool = True
-       enable_mixed_precision: bool = True
-   ```
+## The Base Shape
 
-5. **Validation and Documentation**
-   ```python
-   @dataclass
-   class ValidatedConfig(BaseConfig):
-       """Configuration with built-in validation and documentation."""
-       
-       learning_rate: float = 3e-4
-       """Learning rate for AdamW optimizer. 
-       Typically 3e-4 for small models, 2e-4 for large."""
-       
-       gradient_clip: float = 1.0
-       """Gradient clipping value. Set to 0 to disable."""
-       
-       def __post_init__(self):
-           """Validate configuration values."""
-           if not 0 < self.learning_rate < 1:
-               raise ValueError(f"Invalid learning rate: {self.learning_rate}")
-           
-           if self.gradient_clip < 0:
-               raise ValueError("Gradient clip must be non-negative")
-   ```
+Every `DreamTrainerConfig` includes:
 
-### Real-World Example
+| Field | Purpose |
+| --- | --- |
+| `project`, `group`, `experiment` | Run identity (used by WandB). |
+| `seed` | Reproducibility. |
+| `device_parameters` | Device, dtype, compile, and parallelism choices. |
+| `training_parameters` | Epochs, step counts, validation cadence, accumulation, clipping. |
+| `callbacks` | Lifecycle extensions as a `CallbackCollection`. |
+| `logging_parameters` | WandB logging behavior. |
 
-Here's how the Llama3 example uses configs as code:
+Your subclass adds whatever factories and hyperparameters your model needs:
 
 ```python
-from functools import partial
-from dream_trainer import callbacks
-from dream_trainer.configs import TrainingParameters, DeviceParameters
+from dataclasses import dataclass, field
 
-# Modular configuration with clear types
-config = StudentTrainerConfig(
-    # Project metadata
-    project="llama3-training",
-    group="baseline",
-    
-    # Model configuration using factories
-    model=partial(LlamaModel, num_heads=32, rope_theta=10_000),
-    
-    # Device configuration with helper methods
-    device_parameters=DeviceParameters.FSDP(
-        tensor_parallel=4,
-        compile_model=True,
-    ),
-    
-    # Training configuration with validation
-    training_parameters=TrainingParameters(
-        n_epochs=10,
-        train_batch_size=32,
-        gradient_accumulation_steps=calculate_grad_accum_steps(),
-    ),
-    
-    # Composable callbacks
-    callbacks=callbacks.CallbackCollection([
-        callbacks.LoggerCallback(code_dir="../"),
-        callbacks.CheckpointCallback(monitor="val_loss", mode="min"),
-        callbacks.ProfileCallback() if DEBUG else None,  # Conditional
-    ].filter(None))  # Remove None values
-)
-```
+from torchmetrics import MeanSquaredError, MetricCollection
 
-### Migration from YAML
-
-If you're coming from YAML-based configs:
-
-```python
-# Old YAML approach
-# with open("config.yaml") as f:
-#     config = yaml.safe_load(f)
-# model = Model(**config["model"])  # No type checking!
-
-# Dream Trainer approach
-config = MyTrainerConfig.from_file("config.py")  # If needed
-# Or better, just import it:
-from configs.experiment import production_config
-model = Model(config.model)  # Full type safety!
-```
-
-## Basic Configuration
-
-The main configuration class is `DreamTrainerConfig`. Here's a basic example:
-
-```python
 from dream_trainer import DreamTrainerConfig
 
-config = DreamTrainerConfig(
-    project="my-project",
-    group="experiments",
-    experiment="run-001"
-)
+
+@dataclass(kw_only=True)
+class MyTrainerConfig(DreamTrainerConfig):
+    model: MyModelConfig
+    optimizer: OptimizerConfig
+    train_data: DataConfig
+    val_data: DataConfig
+    metrics: MetricCollection = field(
+        default_factory=lambda: MetricCollection({"mse": MeanSquaredError()})
+    )
 ```
 
-### Project Settings
+## File Layout
 
-| Parameter    | Type | Description                        |
-| ------------ | ---- | ---------------------------------- |
-| `project`    | str  | Project name for organization      |
-| `group`      | str  | Group name for related experiments |
-| `experiment` | str  | Unique experiment identifier       |
+For anything beyond a one-file quick start, split into two files:
 
-## Device Parameters
+- `config.py` — the `Config` subclass and named factory functions (`debug_config()`, `fsdp_config()`, …).
+- `train.py` — the trainer class and a `train(config)` entrypoint.
 
-Configure hardware and distributed training settings:
-
-```python
-from dream_trainer.configs import DeviceParameters
-import torch
-
-device_params = DeviceParameters(
-    # Distributed training
-    data_parallel_size=1,
-    tensor_parallel_size=1,
-    pipeline_parallel_size=1,
-    context_parallel_size=1,
-
-    # Performance
-    compile_model=True,
-    param_dtype=torch.bfloat16,
-    activation_dtype=torch.bfloat16,
-
-    # Memory optimization
-    checkpoint_activations=False,
-    offload_optimizer=False,
-    offload_parameters=False
-)
-```
-
-### Distributed Training
-
-| Parameter                | Type | Description                         |
-| ------------------------ | ---- | ----------------------------------- |
-| `data_parallel_size`     | int  | Number of GPUs for data parallelism |
-| `tensor_parallel_size`   | int  | Tensor parallelism degree           |
-| `pipeline_parallel_size` | int  | Pipeline parallelism degree         |
-| `context_parallel_size`  | int  | Context parallelism degree          |
-
-### Performance Settings
-
-| Parameter          | Type        | Description                          |
-| ------------------ | ----------- | ------------------------------------ |
-| `compile_model`    | bool        | Use torch.compile for optimization   |
-| `param_dtype`      | torch.dtype | Parameter data type (e.g., bfloat16) |
-| `activation_dtype` | torch.dtype | Activation data type                 |
-
-### Memory Optimization
-
-| Parameter                | Type | Description                     |
-| ------------------------ | ---- | ------------------------------- |
-| `checkpoint_activations` | bool | Enable activation checkpointing |
-| `offload_optimizer`      | bool | Offload optimizer states to CPU |
-| `offload_parameters`     | bool | Offload parameters to CPU       |
+This mirrors production trainers. The same trainer class runs every variant; the variant picks the config.
 
 ## Training Parameters
 
-Configure training loop settings:
+`TrainingParameters` controls loop length and optimizer cadence:
 
 ```python
-from dream_trainer.configs import TrainingParameters
-
-training_params = TrainingParameters(
-    # Basic training
-    n_epochs=10,
-    train_batch_size=32,
-    val_batch_size=32,
-
-    # Optimization
-    gradient_clip_val=1.0,
+TrainingParameters(
+    n_epochs=100,
+    train_steps_per_epoch=1200,
     gradient_accumulation_steps=1,
-    max_grad_norm=1.0,
-
-    # Validation
-    val_frequency=0.5,
-    num_sanity_val_steps=2,
-
-    # Learning rate
-    learning_rate=1e-4,
-    weight_decay=0.01,
-    warmup_steps=1000
+    val_steps_per_epoch=256,
+    val_every_n_steps=None,    # None → validate at epoch boundary
+    num_sanity_val_steps=32,
+    gradient_clip_val=1.0,
 )
 ```
 
-### Basic Training
+If you omit step counts, Dream Trainer infers them from the dataloaders. Iterable datasets without `__len__` must provide explicit counts.
 
-| Parameter          | Type | Description               |
-| ------------------ | ---- | ------------------------- |
-| `n_epochs`         | int  | Number of training epochs |
-| `train_batch_size` | int  | Training batch size       |
-| `val_batch_size`   | int  | Validation batch size     |
+!!! warning "Use `self.backward`, not `loss.backward()`"
+    `gradient_accumulation_steps` only works if you use `self.backward(loss)` in `training_step` and gate optimizer steps with `self.is_accumulating_gradients`. Calling `loss.backward()` directly skips the accumulation scaling and your grad norms will be wrong by a factor of `gradient_accumulation_steps`.
 
-### Optimization
+## Device Parameters
 
-| Parameter                     | Type  | Description                     |
-| ----------------------------- | ----- | ------------------------------- |
-| `gradient_clip_val`           | float | Gradient clipping value         |
-| `gradient_accumulation_steps` | int   | Steps for gradient accumulation |
-| `max_grad_norm`               | float | Maximum gradient norm           |
-
-### Validation
-
-| Parameter              | Type  | Description                   |
-| ---------------------- | ----- | ----------------------------- |
-| `val_frequency`        | float | Validation frequency (epochs) |
-| `num_sanity_val_steps` | int   | Sanity check steps            |
-
-### Learning Rate
-
-| Parameter       | Type  | Description                |
-| --------------- | ----- | -------------------------- |
-| `learning_rate` | float | Initial learning rate      |
-| `weight_decay`  | float | Weight decay coefficient   |
-| `warmup_steps`  | int   | Learning rate warmup steps |
-
-## Checkpoint Parameters
-
-Configure model checkpointing:
+Start with a preset:
 
 ```python
-from dream_trainer.configs import CheckpointParameters
+DeviceParameters.SINGLE_DEVICE(compile_model=False)
+DeviceParameters.DDP()
+DeviceParameters.FSDP()
+DeviceParameters.HSDP(dp_shard=8)
+```
 
-checkpoint_params = CheckpointParameters(
-    # Basic settings
-    root_dir="./checkpoints",
-    monitor="val_loss",
-    mode="min",
+Override individual fields when you need them:
 
-    # Checkpoint frequency
-    checkpoint_every_n_epochs=1,
-    checkpoint_every_n_steps=None,
-
-    # Checkpoint management
-    keep_top_k=3,
-    save_last=True,
-
-    # Resume settings
-    resume_mode="latest",  # or "best"
-    resume_path=None
+```python
+DeviceParameters(
+    param_dtype=torch.bfloat16,
+    reduce_dtype=torch.float32,
+    compile_model=True,
+    compiled_autograd=True,
+    _dp_shard=8,
+    _dp_replicate=1,
+    _tensor_parallel=1,
+    _context_parallel=1,
+    _pipeline_parallel=1,
 )
 ```
 
-### Basic Settings
-
-| Parameter  | Type | Description                         |
-| ---------- | ---- | ----------------------------------- |
-| `root_dir` | str  | Checkpoint directory                |
-| `monitor`  | str  | Metric to monitor                   |
-| `mode`     | str  | "min" or "max" for monitored metric |
-
-### Checkpoint Frequency
-
-| Parameter                   | Type | Description         |
-| --------------------------- | ---- | ------------------- |
-| `checkpoint_every_n_epochs` | int  | Save every N epochs |
-| `checkpoint_every_n_steps`  | int  | Save every N steps  |
-
-### Checkpoint Management
-
-| Parameter    | Type | Description             |
-| ------------ | ---- | ----------------------- |
-| `keep_top_k` | int  | Keep best K checkpoints |
-| `save_last`  | bool | Always save latest      |
-
-### Resume Settings
-
-| Parameter     | Type | Description        |
-| ------------- | ---- | ------------------ |
-| `resume_mode` | str  | "latest" or "best" |
-| `resume_path` | str  | Path to checkpoint |
+At most one parallelism dimension can be set to `"auto"`; Dream Trainer resolves it from the remaining dimensions and world size. See [Parallelism](parallelism.md) for when to use each mode.
 
 ## Logging Parameters
 
-Configure experiment tracking:
+`WandbLoggingParameters` controls WandB behavior. Disabling logging keeps the `WandBLoggerMixin` path intact (so `self.log_dict(...)` still works) but doesn't send anything externally:
 
 ```python
-from dream_trainer.configs import WandBParameters
-
-wandb_params = WandBParameters(
-    # Basic settings
-    project="my-project",
-    entity="my-team",
-
-    # Experiment info
-    tags=["experiment", "classification"],
-    notes="Initial baseline run",
-
-    # Logging settings
-    log_model=True,
-    log_artifacts=True,
-    log_code=True
-)
+logging_parameters=WandbLoggingParameters(enabled=False)
 ```
 
-### Basic Settings
+Enable it when you want metrics, media, code snapshots, or model watching to land in a WandB run.
 
-| Parameter | Type | Description        |
-| --------- | ---- | ------------------ |
-| `project` | str  | WandB project name |
-| `entity`  | str  | WandB entity/team  |
+## Callbacks In Config
 
-### Experiment Info
-
-| Parameter | Type      | Description      |
-| --------- | --------- | ---------------- |
-| `tags`    | List[str] | Experiment tags  |
-| `notes`   | str       | Experiment notes |
-
-### Logging Settings
-
-| Parameter       | Type | Description           |
-| --------------- | ---- | --------------------- |
-| `log_model`     | bool | Log model checkpoints |
-| `log_artifacts` | bool | Log artifacts         |
-| `log_code`      | bool | Log code changes      |
-
-## Advanced Configuration
-
-### Custom Configuration
-
-You can create custom configuration classes:
+Callbacks live in the config, not in the trainer class. This is how you swap debug and production stacks without touching training code:
 
 ```python
-from dream_trainer.configs import BaseConfig
-
-class CustomConfig(BaseConfig):
-    def __init__(
-        self,
-        custom_param: str,
-        **kwargs
-    ):
-        super().__init__(**kwargs)
-        self.custom_param = custom_param
+callbacks=callbacks.CallbackCollection([
+    callbacks.LoggerCallback(log_every_n_train_batches=20),
+    callbacks.LRLoggerCallback(),
+    callbacks.ProgressBar(metric="train/loss"),
+])
 ```
 
-### Configuration Inheritance
+See [Callbacks](callbacks.md) for the three canonical stacks (minimum / production / debugging).
 
-Configurations can be inherited and extended:
+## Why Configs As Code
+
+Python dataclasses give you things YAML cannot:
+
+- typed nested objects your editor can follow
+- normal inheritance between families of configs
+- factory functions that build runtime components lazily
+- shared constants, helper functions, and imports
+- auto-complete, rename, go-to-definition
+- `isinstance` checks and `mypy` validation before a run starts
+
+Attribute access stays clean:
 
 ```python
-class ExtendedConfig(DreamTrainerConfig):
-    def __init__(
-        self,
-        new_param: int,
-        **kwargs
-    ):
-        super().__init__(**kwargs)
-        self.new_param = new_param
+config.training_parameters.gradient_accumulation_steps
+config.device_parameters.tensor_parallel
+config.model.hidden_dim
 ```
 
-### Configuration Validation
+Those are real attributes. You can navigate, refactor, and type-check them. YAML configs turn all of that into strings.
 
-Add validation to your configurations:
+!!! info "YAML still has a place"
+    Python configs should be the **source of truth**, but exporting a resolved config to YAML or JSON is useful for run records, dashboards, reproducibility snapshots, and diffing two runs. Use YAML as output, not input.
+
+## A Complete Pattern
+
+Here is a `config.py` that shows the full shape — typed model/data/optimizer subconfigs, factory methods that defer construction to setup time, and named variants for debug and large-scale runs.
 
 ```python
-from dream_trainer.configs import BaseConfig
-from typing import Optional
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Iterable
 
-class ValidatedConfig(BaseConfig):
-    def __init__(
-        self,
-        required_param: str,
-        optional_param: Optional[int] = None,
-        **kwargs
-    ):
-        super().__init__(**kwargs)
-        self.required_param = required_param
-        self.optional_param = optional_param
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, Dataset, DistributedSampler
+from torchmetrics import MeanSquaredError, MetricCollection
 
-    def validate(self):
-        if not self.required_param:
-            raise ValueError("required_param cannot be empty")
-        if self.optional_param is not None and self.optional_param < 0:
-            raise ValueError("optional_param must be non-negative")
-```
-
-## Best Practices
-
-1. **Use Type Hints**: Always use type hints for better IDE support
-2. **Validate Inputs**: Add validation for critical parameters
-3. **Document Parameters**: Add docstrings for custom parameters
-4. **Use Sensible Defaults**: Provide reasonable default values
-5. **Group Related Parameters**: Use nested configs for related settings
-
-## Environment Variables
-
-Dream Trainer respects several environment variables:
-
-```bash
-# PyTorch distributed settings
-export MASTER_ADDR=localhost
-export MASTER_PORT=29500
-export WORLD_SIZE=8
-export RANK=0
-
-# NCCL settings for better performance
-export NCCL_DEBUG=INFO
-export NCCL_TREE_THRESHOLD=0
-
-# GPU memory settings
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-```
-
-## Configuration Validation
-
-Dream Trainer validates configurations at runtime:
-
-```python
-# These will raise errors:
-DeviceParameters(
-    data_parallel_size=3,
-    tensor_parallel_size=2,
-    # Error: Total devices (6) must match available GPUs
+from dream_trainer import DreamTrainerConfig, callbacks
+from dream_trainer.configs import (
+    CheckpointParameters,
+    DeviceParameters,
+    TrainingParameters,
+    WandbLoggingParameters,
 )
 
-TrainingParameters(
-    train_batch_size=7,
-    # Error: Batch size must be divisible by data parallel size
-)
+
+@dataclass(kw_only=True)
+class MLPConfig:
+    input_dim: int = 128
+    hidden_dim: int = 512
+    output_dim: int = 1
+    depth: int = 4
+
+    def build(self) -> nn.Module:
+        layers: list[nn.Module] = []
+        dim = self.input_dim
+        for _ in range(self.depth):
+            layers.extend([nn.Linear(dim, self.hidden_dim), nn.SiLU()])
+            dim = self.hidden_dim
+        layers.append(nn.Linear(dim, self.output_dim))
+        return nn.Sequential(*layers)
+
+
+@dataclass(kw_only=True)
+class DataConfig:
+    path: Path
+    batch_size: int = 32
+    num_workers: int = 8
+    shuffle: bool = True
+
+    def build_dataloader(self, *, rank: int, world_size: int) -> DataLoader:
+        dataset = MyDataset(self.path)
+        sampler = DistributedSampler(
+            dataset, num_replicas=world_size, rank=rank, shuffle=self.shuffle,
+        )
+        return DataLoader(
+            dataset, batch_size=self.batch_size, num_workers=self.num_workers,
+            sampler=sampler, pin_memory=True,
+        )
+
+
+@dataclass(kw_only=True)
+class OptimizerConfig:
+    learning_rate: float = 3e-4
+    weight_decay: float = 0.1
+
+    def build(self, parameters: Iterable[torch.nn.Parameter]) -> torch.optim.Optimizer:
+        return torch.optim.AdamW(
+            parameters, lr=self.learning_rate, weight_decay=self.weight_decay,
+        )
+
+
+@dataclass(kw_only=True)
+class RegressionTrainerConfig(DreamTrainerConfig):
+    train_data: DataConfig
+    val_data: DataConfig
+    model: MLPConfig = field(default_factory=MLPConfig)
+    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+    metrics: MetricCollection = field(
+        default_factory=lambda: MetricCollection({"mse": MeanSquaredError()})
+    )
 ```
+
+The trainer consumes those factories in setup hooks — not in the config:
+
+```python
+class RegressionTrainer(DreamTrainer):
+    config: RegressionTrainerConfig
+
+    def configure_models(self):
+        self.model = self.config.model.build()
+
+    def configure_optimizers(self):
+        self.optimizer = self.config.optimizer.build(self.model.parameters())
+        return {self.model: self.optimizer}
+
+    def configure_dataloaders(self):
+        return (
+            self.config.train_data.build_dataloader(
+                rank=self.world.dp_rank, world_size=self.world.dp_size,
+            ),
+            self.config.val_data.build_dataloader(
+                rank=self.world.dp_rank, world_size=self.world.dp_size,
+            ),
+        )
+```
+
+Notice that `build_dataloader` takes `rank` and `world_size` as arguments — the config doesn't know them, the trainer supplies them from `self.world` at setup time. This is the boundary in action.
+
+## Named Variants
+
+Run variants are **named functions**, not mutated global state.
+
+```python
+def debug_config() -> RegressionTrainerConfig:
+    return RegressionTrainerConfig(
+        project="regression",
+        group="debug",
+        model=MLPConfig(input_dim=32, hidden_dim=64, depth=2),
+        train_data=DataConfig(path=Path("/data/debug/train"), batch_size=16),
+        val_data=DataConfig(path=Path("/data/debug/val"), batch_size=16, shuffle=False),
+        device_parameters=DeviceParameters.SINGLE_DEVICE(compile_model=False),
+        training_parameters=TrainingParameters(
+            n_epochs=1, train_steps_per_epoch=20, val_steps_per_epoch=4,
+            num_sanity_val_steps=2,
+        ),
+        logging_parameters=WandbLoggingParameters(enabled=False),
+        callbacks=callbacks.CallbackCollection([
+            callbacks.LoggerCallback(log_every_n_train_batches=1),
+            callbacks.ProgressBar(metric="train/loss"),
+        ]),
+    )
+
+
+def fsdp_1b_config() -> RegressionTrainerConfig:
+    return RegressionTrainerConfig(
+        project="regression",
+        group="fsdp-1b",
+        model=MLPConfig(input_dim=1024, hidden_dim=8192, depth=32),
+        optimizer=OptimizerConfig(learning_rate=3e-4, weight_decay=0.1),
+        train_data=DataConfig(path=Path("/data/full/train"), batch_size=2),
+        val_data=DataConfig(path=Path("/data/full/val"), batch_size=2, shuffle=False),
+        device_parameters=DeviceParameters.FSDP(
+            tensor_parallel="auto", dp_shard="auto",
+            compile_model=True, compiled_autograd=True,
+        ),
+        training_parameters=TrainingParameters(
+            n_epochs=10, train_steps_per_epoch=10_000, val_steps_per_epoch=500,
+            gradient_accumulation_steps=8, num_sanity_val_steps=4,
+            gradient_clip_val=1.0,
+        ),
+        logging_parameters=WandbLoggingParameters(enabled=True),
+        callbacks=callbacks.CallbackCollection([
+            callbacks.LoggerCallback(log_every_n_train_batches=20),
+            callbacks.ProgressBar(metric="train/loss"),
+            callbacks.AsyncCheckpointCallback(
+                CheckpointParameters(
+                    root_dir="/checkpoints/regression-1b",
+                    monitor="val/loss", resume_mode="min",
+                    checkpoint_every_n_val_epochs=1, keep_top_k=3,
+                ),
+            ),
+        ]),
+    )
+```
+
+Named variants make PRs reviewable. "Changed `fsdp_1b_config`" is a different claim than "changed some nested key in `default.yaml`".
+
+## Deriving Variants
+
+When two variants share most fields, use `dataclasses.replace` or inheritance instead of duplicating:
+
+=== "dataclasses.replace"
+
+    ```python
+    from dataclasses import replace
+
+    def compiled_debug_config() -> RegressionTrainerConfig:
+        base = debug_config()
+        return replace(
+            base,
+            device_parameters=DeviceParameters.SINGLE_DEVICE(compile_model=True),
+        )
+    ```
+
+=== "Inheritance"
+
+    ```python
+    @dataclass(kw_only=True)
+    class BaseImageConfig(DreamTrainerConfig):
+        image_size: int = 256
+        channels: int = 3
+
+
+    @dataclass(kw_only=True)
+    class DiffusionConfig(BaseImageConfig):
+        noise_schedule: str = "cosine"
+
+
+    @dataclass(kw_only=True)
+    class DiscriminatorConfig(BaseImageConfig):
+        use_spectral_norm: bool = True
+    ```
+
+    Use inheritance when a *family* of configs shares structure. If it starts hiding too much, fall back to explicit factory functions.
+
+!!! tip "Use `default_factory` for mutable defaults"
+    Mutable dataclass defaults (`MetricCollection`, `CallbackCollection`) must use `field(default_factory=...)` — otherwise every config instance shares the same object.
+
+    ```python
+    metrics: MetricCollection = field(
+        default_factory=lambda: MetricCollection({"mse": MeanSquaredError()}),
+    )
+    ```
+
+## Defaults To Revisit
+
+A few defaults trip up new trainers. Revisit them when you copy a config from an existing run:
+
+- `compile_model=True` is the DDP/FSDP preset default. If you haven't implemented `apply_compile`, set it to `False` for your first run.
+- `param_dtype=torch.bfloat16` is the mixed-precision default. Make sure your model math and dataset tensors are compatible.
+- `val_every_n_steps=None` runs validation at epoch boundaries. Set an explicit step cadence for long epochs.
+- `num_sanity_val_steps=0` skips sanity validation entirely. Set this above zero on any new trainer — the first validation pass before training catches 90% of setup bugs.
+- `resume_data=True` resumes dataloader state on checkpoint load. Set to `False` when you resume model state but intentionally change the data.
+
+## Checklist
+
+Before shipping a config module:
+
+- [ ] Configs are dataclasses with typed fields.
+- [ ] Heavy runtime objects are built in trainer hooks, not config defaults.
+- [ ] Mutable defaults use `field(default_factory=...)`.
+- [ ] Dataloader factories receive `rank` and `world_size` at setup time.
+- [ ] Debug and production variants are named functions, not mutated state.
+- [ ] Device scale changes are expressed through `DeviceParameters`.
+- [ ] Callback stacks are config-owned.
+- [ ] The same trainer class runs every variant.
+- [ ] Nothing in the config module has import-time side effects.
 
 ## Next Steps
 
-- See [Trainer Guide](trainer-guide.md) for implementing custom trainers
-- Check [Callbacks](callbacks.md) for extending functionality
-- Read [Distributed Training](distributed.md) for multi-GPU details
+- [Trainer Guide](trainer-guide.md) — the hooks that consume these configs.
+- [Parallelism](parallelism.md) — what each `DeviceParameters` preset actually does.
+- [AI Agent Friendly](agents.md) — why typed config surfaces help code generation.

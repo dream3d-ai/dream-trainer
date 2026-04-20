@@ -5,107 +5,76 @@ repo_url: https://github.com/dream3d/dream-trainer
 edit_uri: edit/main/dream-trainer/pages/docs/
 
 nav:
-  - Home: index.md
-  - Getting Started:
-      - Installation: installation.md
-      - Quick Start: getting-started.md
-      - Core Concepts: core-concepts.md
-  - User Guide:
-      - Configuration: configuration.md
-      - Configuration Mastery: configuration-mastery.md
-      - Trainer Guide: trainer-guide.md
-      - Callbacks: callbacks.md
-      - Parallelism: parallelism.md
-      - Debugging: debugging.md
-      - Performance Tuning: performance.md
+  - Documentation:
+      - Overview: index.md
+      - Comparison: comparison.md
+      - AI Agent Friendly: agents.md
+      - Getting Started:
+          - Installation: installation.md
+          - Quick Start: getting-started.md
+          - Core Concepts: core-concepts.md
+          - Design Philosophy: design-philosophy.md
+      - How-To Guides:
+          - Trainer Guide: trainer-guide.md
+          - Configuration: configuration.md
+          - Using the CLI: cli.md
+          - Parallelism: parallelism.md
+          - Callbacks: callbacks.md
+          - Checkpointing: checkpointing.md
+          - Logging And Metrics: logging-metrics.md
+          - Debugging: debugging.md
+          - Performance: performance.md
+      - Maintenance:
+          - Troubleshooting: troubleshooting.md
+          - FAQ: faq.md
+          - Contributing: contributing.md
   - Tutorials:
-      - Your First Trainer: tutorials/first-trainer.md
-      - Multi-GPU Training: tutorials/multi-gpu.md
-      - Custom Components: tutorials/custom-components.md
-      - Production Setup: tutorials/production.md
-  - Examples:
-      - Vision Models: examples/vision.md
-      - Language Models: examples/nlp.md
-      - Multi-Modal: examples/multimodal.md
-      - Advanced Patterns: examples/advanced.md
+      - 1. Meet Meteor: tutorials/first-trainer.md
+      - 2. Scaling Meteor: tutorials/multi-gpu.md
+      - 3. Sharding Meteor: tutorials/fsdp.md
+      - 4. Production Shape: tutorials/production.md
+      - 5. Extending Meteor: tutorials/custom-components.md
   - API Reference:
       - Overview: api/index.md
       - Trainers:
-          - AbstractTrainer: api/trainers/abstract.md
-          - BaseTrainer: api/trainers/base.md
-          - DreamTrainer: api/trainers/dream.md
+          - Abstract Trainer: api/trainers/abstract.md
+          - Base Trainer: api/trainers/base.md
+          - Dream Trainer: api/trainers/dream.md
       - Mixins:
-          - Setup Mixins: api/mixins/setup.md
-          - Evaluation Mixins: api/mixins/eval_metric.md
-          - Logger Mixins: api/mixins/loggers.md
-          - Quantization Mixins: api/mixins/quantize.md
+          - Setup: api/mixins/setup.md
+          - Evaluation Metrics: api/mixins/eval_metric.md
+          - Loggers: api/mixins/loggers.md
+          - Quantization: api/mixins/quantize.md
       - Callbacks:
-          - Callback Base: api/callbacks/base.md
-          - Checkpoint Callbacks: api/callbacks/checkpoint.md
-          - Monitoring Callbacks: api/callbacks/monitoring.md
-          - Performance Callbacks: api/callbacks/performance.md
+          - Base: api/callbacks/base.md
+          - Checkpointing: api/callbacks/checkpoint.md
+          - Logging: api/callbacks/logging.md
+          - Performance: api/callbacks/performance.md
+          - Training Extensions: api/callbacks/training.md
       - Configuration:
-          - Parameter Classes: api/configuration/parameters.md
-          - Device Config: api/configuration/device.md
-          - Training Config: api/configuration/training.md
+          - Parameters: api/configuration/parameters.md
+          - Device: api/configuration/device.md
+          - Training: api/configuration/training.md
+          - Checkpointing: api/configuration/checkpoint.md
       - Utilities:
-          - World Management: api/utilities/world.md
-          - Data Utilities: api/utilities/data.md
+          - Distributed World: api/utilities/world.md
           - Common Utilities: api/utilities/common.md
-  - Community:
-      - Contributing: contributing.md
-      - FAQ: faq.md
-      - Troubleshooting: troubleshooting.md
-      - Changelog: changelog.md
+          - CLI: api/utilities/cli.md
 
-# Use the Material for MkDocs theme
 theme:
-  name: material
-  logo: assets/logo.png  # Optional: place logo here
-  favicon: assets/favicon.png  # Optional: place favicon here
-  palette:
-    # Light mode
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/brightness-7
-        name: Switch to dark mode
-    # Dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: indigo
-      accent: indigo
-      toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
-  features:
-    - navigation.instant
-    - navigation.tracking
-    - navigation.tabs
-    - navigation.tabs.sticky
-    - navigation.sections
-    - navigation.expand
-    - navigation.prune
-    - navigation.indexes
-    - navigation.top
-    - navigation.footer
-    - search.suggest
-    - search.highlight
-    - search.share
-    - content.code.copy
-    - content.code.annotate
-    - content.action.edit
-    - content.action.view
-    - content.tooltips
-    - toc.follow
-    - toc.integrate
-  font:
-    text: Inter
-    code: JetBrains Mono
-  icon:
-    repo: fontawesome/brands/github
+  name: shadcn
+  custom_dir: overrides
+  show_title: false
+  show_stargazers: false
+  topbar_sections: true
+  show_datetime: true
+  accent: "oklch(54.6% 0.245 262.881)"
+  pygments_style:
+    light: shadcn-light
+    dark: nord-darker
+  katex_options:
+    macros:
+      "\\RR": "\\mathbb{R}"
 
 # Plugins
 plugins:
@@ -139,15 +108,12 @@ plugins:
             docstring_section_style: spacy
             members_order: source
             show_labels: true
-  - git-revision-date-localized:
-      enable_creation_date: true
-      type: timeago
-  - tags
 
 # Markdown extensions
 markdown_extensions:
   - admonition
   - attr_list
+  - md_in_html
   - def_list
   - footnotes
   - tables
@@ -173,51 +139,19 @@ markdown_extensions:
       custom_fences:
         - name: mermaid
           class: mermaid
-  - pymdownx.tabbed:
-      alternate_style: true
+  - pymdownx.tabbed
   - pymdownx.tasklist:
       custom_checkbox: true
   - pymdownx.snippets:
-      auto_append:
-        - includes/abbreviations.md
       check_paths: true
   - pymdownx.magiclink:
       repo_url_shorthand: true
       user: dream3d
       repo: dream-trainer
 
-# Extra configuration
-extra:
-  version:
-    provider: mike
-    default: stable
-  social:
-    - icon: fontawesome/brands/github
-      link: https://github.com/dream3d/dream-trainer
-    - icon: fontawesome/brands/discord
-      link: https://discord.gg/dream-trainer
-    - icon: fontawesome/brands/twitter
-      link: https://twitter.com/dream3d_ai
-  analytics:
-    provider: google
-    property: G-XXXXXXXXXX  # Replace with actual tracking ID
-  consent:
-    title: Cookie consent
-    description: >- 
-      We use cookies to recognize your repeated visits and preferences, as well
-      as to measure the effectiveness of our documentation and whether users
-      find what they're searching for. With your consent, you're helping us to
-      make our documentation better.
-
-# Additional CSS
 extra_css:
-  - stylesheets/extra.css
-
-# Additional JavaScript
-extra_javascript:
-  - javascripts/mathjax.js
-  - https://polyfill.io/v3/polyfill.min.js?features=es6
-  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+  - stylesheets/pygments-syntax.css
+  - stylesheets/shadcn-overrides.css
 
 # Watch for changes in includes directory
 watch:

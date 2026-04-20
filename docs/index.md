@@ -1,122 +1,173 @@
-# Dream Trainer Documentation
-
-Dream Trainer is a powerful, distributed training framework built exclusively around PyTorch's new DTensor abstractions. It provides a flexible, composable approach that makes it easy to adopt the latest PyTorch DTensor APIs.
-
-Dream Trainer was created to address these core issues:
-
-- **Boilerplate Overload**: Each parallelism scheme (DDP, FSDP, tensor, pipeline, etc.) requires its own verbose, error-prone setup & configuration that must be applied in the correct order.
-- **Legacy Trainer Limitations**: Most trainers are tightly coupled to old DDP/FSDP APIs and "zero-config" abstractions, making debugging harder and preventing them from taking advantage of new DTensor-based distributed patterns. Being DTensor-native makes code simpler and easier to debug.
-- **Complexity in Real Workflows**: Even simple training scripts become unwieldy when mixing advanced parallelism, due to scattered configuration and framework assumptions.
-
-## 🏗️ Design Principles
-
-Dream Trainer is built on three core principles:
-
-1. **Native PyTorch First**
-
-   - Designed exclusively around PyTorch's new DTensor abstractions for simple but powerful parallelism
-   - Direct integration with PyTorch's ecosystem (torchao, torchft, DCP, torchrun)
-
-2. **Minimal Assumptions**
-
-   - Let users make their own choices
-   - No automatic model wrapping or hidden behaviors
-   - Assume users know what they're doing with advanced parallelism
-
-3. **Composable Architecture**
-   - Trainer is a composition of mixins
-   - Take what you need, drop the rest
-   - Write your own components when needed
-   - Callback system for drop-in modifications to the loop
-
-## 🌟 Key Features
-
-### Parallelism Support
-
-Dream Trainer provides simple configuration for all PyTorch parallelism schemes:
-
-- **Data Parallelism**: Basic multi-GPU training with PyTorch's `replicate()` API
-- **FSDP2**: Second-generation Fully Sharded Data Parallel built on DTensor
-- **Tensor Parallelism (TP)**: Parameter-wise sharding via DTensor layouts; composable with FSDP2 for HSDP
-- **Context Parallelism (CP)**: Sequence parallelism for extremely long contexts
-- **Pipeline Parallelism (PP)**: Layer pipelining across GPUs / nodes with automatic schedule search
+---
+title: dream-trainer
+summary: Dream Trainer is a composable PyTorch training framework for custom training systems. It gives you reusable building blocks for trainer lifecycle, distributed setup, callbacks, checkpointing, and configuration so you can keep the algorithm explicit, scale through config, and avoid rebuilding trainer infrastructure for every project.
+hide:
+  - toc
+show_datetime: false
+---
 
 
-Unlike monolithic frameworks, Dream Trainer uses mixins to let you pick exactly what you need:
+## Quickstart
+
+Install and run a single-file trainer in under a minute.
+
+=== "pip"
+
+    ```bash
+    pip install "dream-trainer[metrics,wandb]"
+    ```
+
+=== "uv"
+
+    ```bash
+    uv add "dream-trainer[metrics,wandb]"
+    ```
+
+=== "From source"
+
+    ```bash
+    git clone https://github.com/dream3d/dream-trainer
+    cd dream-trainer && uv sync --all-extras
+    ```
+
+[Quick Start →](getting-started.md){ .home-cta } &nbsp; [Installation →](installation.md){ .home-cta-ghost }
+
+## A trainer in ten lines
 
 ```python
-# Minimal trainer for research
-class SimpleTrainer(BaseTrainer, SetupMixin):
-    def training_step(self, batch, batch_idx):
-        loss = self.model(batch)
-        self.backward(loss)
-        return {"loss": loss}
+from dream_trainer import DreamTrainer
 
-# Production trainer with all the bells and whistles
-class ProductionTrainer(BaseTrainer, SetupMixin, EvalMetricMixin, 
-                       WandBLoggerMixin, QuantizeMixin):
-    # Same training_step, but now with metrics, logging, and quantization!
+class MyTrainer(DreamTrainer):
+    def configure_models(self):
+        self.model = MyModel(self.config.model)
+
+    def configure_optimizers(self):
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
+        return {self.model: self.optimizer}
+
+    def training_step(self, batch, batch_idx):
+        logits = self.model(batch["input"])
+        loss = F.cross_entropy(logits, batch["target"])
+        self.backward(loss)
+        return {"train/loss": loss, "train/grad_norm": self.step(self.optimizer)}
+
+MyTrainer(config).fit()
 ```
 
-### Other Features via Callbakcs
+No hidden decorators, no framework-owned `forward`. Dream Trainer handles distributed launch, device mesh construction, meta-device materialization, parallelism ordering, checkpoint state, and callback dispatch. Everything else is ordinary PyTorch.
 
-- **Checkpointing** DCP-based checkpointing with async checkpoint support
-- **Built-in Fault Tolerance** via torchft
-- **Native FP8 Quantization** via torchao
-- **Custom Callbacks** for extensibility
-- **Build-your-own-trainer** by composing mixin primitives
+## What you get
 
-## 🤔 Why Dream Trainer vs. Other Frameworks?
+<div class="home-grid" markdown>
 
-While PyTorch Lightning, Accelerate and DeepSpeed simplify distributed training, they revolve around classic DDP/FSDP wrappers and hide key details behind heavyweight base classes. Dream Trainer takes a different path:
+<div class="home-card" markdown>
+### Device meshes, named
 
-- **DTensor-native** from day one—every parameter is a `DTensor`, so new sharding layouts appear the moment they land in PyTorch nightly.
-- **Parallel schemes (FSDP2, TP, PP, CP)** are first-class, composable primitives, not bolt-on "plugins".
-- **Mix-and-match** – DreamTrainer is designed around mixins to maximize composability.
-- **Minimal magic** – no metaclasses, no `LightningModule`; your model remains a plain `nn.Module`.
+`DeviceParameters.FSDP()`, `DeviceParameters.HSDP(...)`, or a custom mesh. Dimensions like `pp`, `dp_replicate`, `dp_shard`, `cp`, `tp` are first-class.
 
-## 📚 Documentation Structure
+[Parallelism →](parallelism.md)
+</div>
 
-### Core Concepts
+<div class="home-card" markdown>
+### Explicit parallelism hooks
 
-- [Getting Started](getting-started.md) - Installation and basic usage
-- [Configuration](configuration.md) - Detailed configuration options
-- [Trainer Guide](trainer-guide.md) - Creating custom trainers
-- [Callbacks](callbacks.md) - Extending functionality with callbacks
+`apply_replicate`, `apply_fully_shard`, `apply_tensor_parallel`, `apply_pipeline_parallel`. You implement only what your model needs. Nothing is guessed.
 
-### Advanced Features
+[Trainer Guide →](trainer-guide.md)
+</div>
 
-- [Distributed Training](distributed.md) - Multi-GPU and multi-node training
-- [Mixed Precision](mixed-precision.md) - FP16, BF16, and FP8 training
-- [Checkpointing](checkpointing.md) - Model saving and loading
-- [Logging](logging.md) - Metrics and experiment tracking
+<div class="home-card" markdown>
+### DCP checkpoints that resume
 
-### Examples & Tutorials
+Full trainer state — model, optimizer, scheduler, dataloader, callbacks, counters — via PyTorch Distributed Checkpoint. Resume works across mesh shapes.
 
-- [Basic Examples](examples/basic.md) - Simple training examples
-- [Advanced Examples](examples/advanced.md) - Complex use cases
-- [Best Practices](best-practices.md) - Training optimization tips
+[Checkpointing →](checkpointing.md)
+</div>
 
-### API Reference
+<div class="home-card" markdown>
+### Callbacks that compose
 
-- [Trainer API](api/trainer.md) - Core trainer classes
-- [Config API](api/config.md) - Configuration classes
-- [Callback API](api/callbacks.md) - Built-in callbacks
-- [Utils API](api/utils.md) - Utility functions
+Logger, progress, LR, profile, benchmark, graph-break, FP8, EMA, async checkpoint, fault tolerance. Register what you need per run.
 
+[Callbacks →](callbacks.md)
+</div>
 
-## 🔧 Requirements
+<div class="home-card" markdown>
+### Diagnostics without code edits
 
-- Python >= 3.10
-- PyTorch >= 2.7.0
-- CUDA-capable GPU (recommended)
+`python train.py profile`, `benchmark`, `find-graph-breaks`, `summarize`. The CLI wraps `@entrypoint` and turns every registered modifier into a `--flag`.
 
-## 📖 Next Steps
+[Using the CLI →](cli.md)
+</div>
 
-- Follow the [Getting Started](getting-started.md) guide to install and set up Dream Trainer
-- Check out the [Examples](examples/basic.md) for complete working code
-- Read the [Trainer Guide](trainer-guide.md) to create your own custom trainer
+<div class="home-card" markdown>
+### Typed configs, not YAML
 
-## 🤝 Contributing
+`DreamTrainerConfig` dataclasses describe the run. The trainer performs setup. Named factories (`debug_config()`, `fsdp_config()`) swap in one line.
 
-We welcome contributions! Please see our [Contributing Guide](contributing.md) for details.
+[Configuration →](configuration.md)
+</div>
+
+</div>
+
+## Built on modern PyTorch
+
+Dream Trainer is a thin lifecycle substrate over the stable PyTorch distributed surface. No private forks, no vendored kernels.
+
+- **`torch`** 2.7+ — `nn.Module`, `torch.compile`, `torch.autograd`.
+- **FSDP2** — fully-sharded data parallel via `fully_shard`.
+- **DTensor** — TP, CP, async TP, 2D parallelism.
+- **DCP** — `torch.distributed.checkpoint` for sharded save/load.
+- **`torch.profiler`** — driven by `ProfileCallback`, no custom instrumentation.
+- **torchao** — optional FP8 quantization via `Fp8Quantization`.
+- **torchft** — optional fault tolerance via `FaultToleranceCallback`.
+
+## Where to go next
+
+<div class="home-grid" markdown>
+
+<div class="home-card" markdown>
+### Learn by doing
+
+Five-part Meteor arc: build a tiny GPT-style trainer from single-GPU to multi-node, FSDP, production shape.
+
+[Tutorials →](tutorials/first-trainer.md)
+</div>
+
+<div class="home-card" markdown>
+### Learn by lookup
+
+Task-oriented recipes — trainer hooks, configuration, parallelism, callbacks, checkpointing, logging, debugging, performance.
+
+[How-To Guides →](trainer-guide.md)
+</div>
+
+<div class="home-card" markdown>
+### Understand the design
+
+Core concepts, lifecycle phases, mixins vs callbacks, and the decisions behind the API.
+
+[Core Concepts →](core-concepts.md)
+</div>
+
+<div class="home-card" markdown>
+### Full API
+
+Every public symbol with source links — trainers, mixins, callbacks, configs, utilities.
+
+[API Reference →](api/index.md)
+</div>
+
+</div>
+
+## Is Dream Trainer for you?
+
+| If you want to… | Dream Trainer? |
+| --- | --- |
+| Train on 1 GPU with a readable loop | Probably overkill — a raw script is simpler. |
+| Scale the same trainer from 1 to 1000 GPUs without rewriting the body | **Yes.** This is the point. |
+| Combine FSDP + TP + CP + PP in one run | **Yes.** Named mesh dimensions make this first-class. |
+| Have the framework pick your parallelism strategy automatically | No — Dream Trainer refuses to guess model-specific parallelism. |
+| Debug a distributed failure by reading ordinary PyTorch objects | **Yes.** Nothing is hidden behind decorators. |
+
+For a deeper comparison with other distributed training frameworks, see [Comparison](comparison.md).

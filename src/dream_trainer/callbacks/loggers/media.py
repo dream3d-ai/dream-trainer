@@ -1,5 +1,5 @@
 from itertools import chain, repeat
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import torch
 from torch import Tensor
@@ -94,9 +94,11 @@ class MediaLoggerCallback(RankZeroCallback[LoggerMixin]):
 
     @override
     def post_validation_step(self, result: dict[str, Any], batch_idx: int):
+        if self._logged_this_epoch:
+            return
+
         if len(self._samples) >= self.num_samples:
-            if not self._logged_this_epoch:
-                self.log_samples()
+            self.log_samples()
             return
 
         if self.image_key not in result:
@@ -125,10 +127,14 @@ class MediaLoggerCallback(RankZeroCallback[LoggerMixin]):
 
         if image_samples:
             images, image_captions = zip(*image_samples)
-            self.trainer.log_images(images, image_captions, desc="images")
+            self.trainer.log_images(
+                cast(Tensor, images), cast(list[str], image_captions), desc="images"
+            )
         if video_samples:
             videos, video_captions = zip(*video_samples)
-            self.trainer.log_videos(videos, video_captions, desc="videos")
+            self.trainer.log_videos(
+                cast(Tensor, videos), cast(list[str], video_captions), desc="videos"
+            )
 
         self._logged_this_epoch = True
         self._samples.clear()
