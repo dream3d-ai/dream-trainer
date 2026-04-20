@@ -1,183 +1,183 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
-         <loc>https://dream3d.ai/trainer/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/agents/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/agents/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/callbacks/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/callbacks/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/checkpointing/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/checkpointing/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/cli/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/cli/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/comparison/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/comparison/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/configuration/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/configuration/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/contributing/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/contributing/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/core-concepts/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/core-concepts/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/debugging/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/debugging/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/design-philosophy/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/design-philosophy/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/faq/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/faq/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/getting-started/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/getting-started/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/installation/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/installation/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/logging-metrics/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/logging-metrics/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/parallelism/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/parallelism/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/performance/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/performance/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/trainer-guide/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/trainer-guide/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/troubleshooting/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/troubleshooting/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/callbacks/base/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/callbacks/base/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/callbacks/checkpoint/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/callbacks/checkpoint/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/callbacks/logging/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/callbacks/logging/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/callbacks/performance/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/callbacks/performance/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/callbacks/training/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/callbacks/training/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/configuration/checkpoint/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/configuration/checkpoint/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/configuration/device/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/configuration/device/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/configuration/parameters/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/configuration/parameters/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/configuration/training/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/configuration/training/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/mixins/eval_metric/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/mixins/eval_metric/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/mixins/loggers/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/mixins/loggers/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/mixins/quantize/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/mixins/quantize/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/mixins/setup/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/mixins/setup/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/trainers/abstract/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/trainers/abstract/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/trainers/base/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/trainers/base/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/trainers/dream/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/trainers/dream/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/utilities/cli/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/utilities/cli/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/utilities/common/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/utilities/common/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/utilities/dist/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/utilities/dist/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/api/utilities/world/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/api/utilities/world/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/tutorials/custom-components/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/tutorials/custom-components/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/tutorials/first-trainer/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/tutorials/first-trainer/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/tutorials/fsdp/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/tutorials/fsdp/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/tutorials/multi-gpu/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/tutorials/multi-gpu/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
     <url>
-         <loc>https://dream3d.ai/trainer/tutorials/production/</loc>
+         <loc>https://dream3d-ai.github.io/dream-trainer/tutorials/production/</loc>
          <lastmod>2026-04-20</lastmod>
     </url>
 </urlset>
