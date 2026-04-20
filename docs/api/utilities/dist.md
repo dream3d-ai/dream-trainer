@@ -39,10 +39,6 @@ from dream_trainer.utils import dist
 from dream_trainer.utils.dist.ops import apply_to_collection, global_agreement
 ```
 
-## Package
-
-::: dream_trainer.utils.dist
-
 ## Core
 
 ::: dream_trainer.utils.dist.core

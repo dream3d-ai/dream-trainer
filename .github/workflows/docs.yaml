@@ -14,15 +14,13 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-      - uses: actions/setup-python@v5
+      - name: Install uv and set the Python version
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: 3.x
-      - run: echo "cache_id=$(date --utc '+%V')" >> $GITHUB_ENV 
-      - uses: actions/cache@v4
-        with:
-          key: mkdocs-shadcn-${{ env.cache_id }}
-          path: .cache 
-          restore-keys: |
-            mkdocs-shadcn-
-      - run: pip install mkdocs-shadcn "jinja2>=3.1.3" 'mkdocstrings[python]' mkdocs-minify-plugin "pygments>=2.19.1"
-      - run: mkdocs gh-deploy --force
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install docs dependencies
+        run: uv sync --group docs
+      - name: Deploy docs
+        run: uv run mkdocs gh-deploy --force
