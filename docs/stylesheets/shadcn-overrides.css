@@ -359,11 +359,13 @@ article .typography > p > small:only-child {
    Home page: hero, card grid, CTAs
    --------------------------------------------------------------------------- */
 
+header a[href$="/dream-trainer/"] > span.size-8:first-child,
 header a[href$="/trainer/"] > span.size-8:first-child {
   background: url("../assets/brand/dream-trainer-mark.svg") center / 1.55rem 1.55rem
     no-repeat;
 }
 
+header a[href$="/dream-trainer/"] > span.size-8:first-child svg,
 header a[href$="/trainer/"] > span.size-8:first-child svg {
   opacity: 0;
 }

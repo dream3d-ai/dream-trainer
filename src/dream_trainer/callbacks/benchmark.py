@@ -254,7 +254,7 @@ class BenchmarkCallback(Callback[BaseTrainer]):
         header = (
             "=== Final Benchmark Results ===" if final else f"=== Benchmark (n={steps}) ==="
         )
-        logger.opt(colors=True).info(
+        logger.info(
             "\n".join(
                 [
                     header,

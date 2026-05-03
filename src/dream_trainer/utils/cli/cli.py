@@ -23,9 +23,9 @@ from inspect import Parameter, Signature, signature
 from typing import TYPE_CHECKING, Annotated, Any, Callable, Literal, TypeVar
 
 import typer
-from loguru import logger
 from typer import Option
 
+from dream_trainer.utils import logger
 from dream_trainer.utils.dist.core import get_dist_rank
 from dream_trainer.utils._logger import setup_logger
 from dream_trainer.utils.modifiers import MODIFIERS
