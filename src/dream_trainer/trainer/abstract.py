@@ -7,6 +7,7 @@ from dream_trainer.configs import DeviceParameters
 from dream_trainer.trainer.world import DistributedWorld
 
 if TYPE_CHECKING:
+    import torch
     import torch.nn as nn
     from torch.optim.lr_scheduler import LRScheduler
     from torch.optim.optimizer import Optimizer
@@ -153,6 +154,22 @@ class AbstractTrainer(ABC):
             dict[str, LRScheduler] | None: Dictionary mapping scheduler names to
                 PyTorch schedulers, or None if no schedulers are used.
                 For example: {"cosine": cosine_scheduler, "linear": linear_scheduler}
+        """
+        ...
+
+    @abstractmethod
+    def named_rngs(self) -> dict[str, "torch.Generator"]:
+        """
+        Return a dictionary mapping RNG names to their corresponding generators.
+
+        This method should return all random number generators used in training,
+        organized by unique string identifiers. These names are used for
+        checkpointing so sampling streams resume exactly.
+
+        Returns:
+            dict[str, torch.Generator]: Dictionary mapping RNG names to
+                torch.Generator instances.
+                For example: {"val_noise_rng": generator}
         """
         ...
 

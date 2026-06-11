@@ -13,6 +13,8 @@ from .setup import (
     ModelSetupMixin,
     OptimizerAndSchedulerSetupConfigMixin,
     OptimizerAndSchedulerSetupMixin,
+    RNGSetupConfigMixin,
+    RNGSetupMixin,
     SetupConfigMixin,
     SetupMixin,
 )
@@ -32,6 +34,8 @@ __all__ = [
     "ModelSetupMixin",
     "OptimizerAndSchedulerSetupConfigMixin",
     "OptimizerAndSchedulerSetupMixin",
+    "RNGSetupConfigMixin",
+    "RNGSetupMixin",
     "SetupConfigMixin",
     "SetupMixin",
 ]

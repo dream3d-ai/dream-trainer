@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from .dataloader import DataLoaderSetupConfigMixin, DataLoaderSetupMixin
 from .models import ModelSetupConfigMixin, ModelSetupMixin
 from .optimizers import OptimizerAndSchedulerSetupConfigMixin, OptimizerAndSchedulerSetupMixin
+from .rngs import RNGSetupConfigMixin, RNGSetupMixin
 
 
 @dataclass(kw_only=True)
@@ -10,6 +11,7 @@ class SetupConfigMixin(
     DataLoaderSetupConfigMixin,
     OptimizerAndSchedulerSetupConfigMixin,
     ModelSetupConfigMixin,
+    RNGSetupConfigMixin,
 ):
     """Configuration mixin that combines all setup-related configurations.
 
@@ -37,6 +39,7 @@ class SetupMixin(
     DataLoaderSetupMixin,
     OptimizerAndSchedulerSetupMixin,
     ModelSetupMixin,
+    RNGSetupMixin,
 ):
     """Orchestrates the complete setup process for the trainer.
 
@@ -91,11 +94,14 @@ class SetupMixin(
 
         This method orchestrates the complete setup process in the correct order:
 
-        1. Model setup: Applies parallelism strategies (TP, PP, FSDP), compiles
+        1. RNG setup: Registers named random number generators so they are
+           available to weight initialization and dataloaders, and are
+           checkpointed alongside the rest of the trainer state
+        2. Model setup: Applies parallelism strategies (TP, PP, FSDP), compiles
            models, and initializes weights
-        2. Optimizer and scheduler setup: Creates optimizers and learning rate
+        3. Optimizer and scheduler setup: Creates optimizers and learning rate
            schedulers based on the configured models
-        3. DataLoader setup: Initializes training and validation dataloaders
+        4. DataLoader setup: Initializes training and validation dataloaders
 
         The order is important as optimizers depend on model parameters, and
         dataloaders may need information about model parallelism for proper
@@ -105,6 +111,7 @@ class SetupMixin(
             This method should be called after `configure()` and before training
             begins. It handles all device placement and distributed setup.
         """
+        self._setup_rngs()
         self._setup_models()
         self._setup_optimizers_and_schedulers()
         self._setup_dataloaders()
