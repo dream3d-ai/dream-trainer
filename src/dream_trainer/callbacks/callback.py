@@ -86,6 +86,15 @@ class Callback(Generic[_AbstractTrainer]):
         """
         raise NotImplementedError("This function should never be called")
 
+    def post_load_state_dict(self, loaded_callback_names: set[str]):
+        """
+        Called after state has been loaded into the trainer.
+
+        Args:
+            loaded_callback_names: Callback state keys that were present in the state dict.
+        """
+        raise NotImplementedError("This function should never be called")
+
     def pre_fit(self):
         """
         Called when the fit process starts.

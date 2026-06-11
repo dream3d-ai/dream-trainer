@@ -21,14 +21,14 @@ from typing_extensions import override
 
 from dream_trainer.configs.trainer import TrainingParameters
 from dream_trainer.utils import logger
-from dream_trainer.utils.dist import ops as dist_ops
-from dream_trainer.utils.dist.ops import apply_to_collection
 from dream_trainer.utils.common import seed_everything, stacked_context
 from dream_trainer.utils.dataloader import (
     Batch,
     get_train_dataloader_steps,
     get_val_dataloader_steps,
 )
+from dream_trainer.utils.dist import ops as dist_ops
+from dream_trainer.utils.dist.ops import apply_to_collection
 
 from .abstract import AbstractTrainerConfig
 from .mixins.eval_metric import EvalMetricMixin
@@ -122,11 +122,13 @@ class BaseTrainer(EvalMetricMixin, Stateful):
             "trainer": {
                 "global_step": self.global_step,
                 "current_epoch": self.current_epoch,
-                "local_batches": self.local_batches,
                 "callbacks": self.callbacks.state_dict(),
             },
             "models": self.model_state_dict(),
             "optimizers": {
+                # If this trainer grows pipeline-parallel model parts where multiple
+                # optimizers can share param-group indices across stages, pass
+                # StateDictOptions(flatten_optimizer_state_dict=True) here and on load.
                 name: get_optimizer_state_dict(self.get_model_by_optimizer(name), optimizer)
                 for name, optimizer in self.named_optimizers().items()
             },
@@ -138,6 +140,7 @@ class BaseTrainer(EvalMetricMixin, Stateful):
                 "train": getattr(self.train_dataloader, "state_dict", lambda: {})(),
                 "val": getattr(self.val_dataloader, "state_dict", lambda: {})(),
             },
+            "rngs": {name: rng.get_state() for name, rng in self.named_rngs().items()},
         }
 
     def load_state_dict(
@@ -163,13 +166,19 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         Raises:
             ValueError: If strict=True and state_dict contains unexpected keys.
         """
+        loaded_callback_names: set[str] = set()
+
         # Load Trainer State
         if trainer_state := state_dict.pop("trainer", {}):
             self.global_step = trainer_state.pop("global_step")
             self.current_epoch = trainer_state.pop("current_epoch")
-            self.local_batches = trainer_state.pop("local_batches")
+            # `local_batches` controls the in-process gradient accumulation phase.
+            # It must not be restored from checkpoints because checkpoint save
+            # hooks can run before the loop increments it for the completed batch.
+            trainer_state.pop("local_batches", None)
 
             if callbacks_state := trainer_state.pop("callbacks", {}):
+                loaded_callback_names = set(callbacks_state)
                 self.callbacks.load_state_dict(callbacks_state)
 
         # Load Model State
@@ -194,6 +203,12 @@ class BaseTrainer(EvalMetricMixin, Stateful):
             if name in schedulers_state:
                 scheduler.load_state_dict(schedulers_state[name])
                 schedulers_state.pop(name)
+
+        # Load RNG State
+        rngs_state = state_dict.pop("rngs", {})
+        for name, rng in self.named_rngs().items():
+            if name in rngs_state:
+                rng.set_state(rngs_state.pop(name))
 
         # Load Dataloader State
         dataloader_state = state_dict.pop("dataloaders", {})
@@ -220,6 +235,8 @@ class BaseTrainer(EvalMetricMixin, Stateful):
             leftover_keys["optimizers"] = optimizers_state
         if schedulers_state:
             leftover_keys["schedulers"] = schedulers_state
+        if rngs_state:
+            leftover_keys["rngs"] = rngs_state
         if dataloader_state:
             leftover_keys["dataloaders"] = dataloader_state
         if trainer_state:
@@ -227,6 +244,8 @@ class BaseTrainer(EvalMetricMixin, Stateful):
 
         if leftover_keys:
             logger.warning(f"Keys in state_dict were not loaded: {leftover_keys}")
+
+        self.callbacks.post_load_state_dict(loaded_callback_names)
 
     @override
     def fit(self):
@@ -399,9 +418,9 @@ class BaseTrainer(EvalMetricMixin, Stateful):
                 meta_parameters.append(f"param_group_parameter[{idx}]")
                 continue
 
-            if (torch.is_floating_point(parameter) or torch.is_complex(parameter)) and not torch.isfinite(
-                parameter
-            ).all():
+            if (
+                torch.is_floating_point(parameter) or torch.is_complex(parameter)
+            ) and not torch.isfinite(parameter).all():
                 nonfinite_parameters.append(f"param_group_parameter[{idx}]")
 
         if meta_parameters or nonfinite_parameters:
@@ -418,7 +437,9 @@ class BaseTrainer(EvalMetricMixin, Stateful):
                     + ", ".join(nonfinite_parameters[:8])
                     + (" ..." if len(nonfinite_parameters) > 8 else "")
                 )
-            raise RuntimeError("Optimizer parameters are invalid before step; " + "; ".join(issues))
+            raise RuntimeError(
+                "Optimizer parameters are invalid before step; " + "; ".join(issues)
+            )
 
         return parameters
 
@@ -500,7 +521,9 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         self._validate_gradients(parameters)
         total_norm = self.total_gradient_norm(parameters, p=2, foreach=True)
         if not torch.isfinite(total_norm):
-            raise RuntimeError(f"Gradient norm is non-finite before optimizer step: {total_norm}")
+            raise RuntimeError(
+                f"Gradient norm is non-finite before optimizer step: {total_norm}"
+            )
         if float(total_norm) == 0.0:
             raise RuntimeError("All optimizer gradients are exactly zero before optimizer step")
         self.clip_gradient_norm(parameters, total_norm, foreach=True)
@@ -733,6 +756,20 @@ class BaseTrainer(EvalMetricMixin, Stateful):
                     ),
                 )
 
+        if batch_idx < self._num_train_batches:
+            rank = (
+                self.world.world_mesh.get_rank()
+                if self.world.world_mesh is not None
+                else "unknown"
+            )
+            raise RuntimeError(
+                f"Worker {rank} received fewer training batches than expected. "
+                f"Expected {self._num_train_batches} batches, received {batch_idx}. "
+                "This can cause distributed training to deadlock because other ranks may "
+                "still be inside training collectives. Check dataloader sharding, "
+                "drop_last, and worker exceptions."
+            )
+
         # End-of-epoch validation when val_every_n_steps is None
         if self.training_parameters.val_every_n_steps is None:
             self.perform_validation_epoch()
@@ -832,6 +869,9 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         Sanity validation is skipped when resuming from a checkpoint
         (i.e., when global_step > 0).
         """
+        if self.global_step > 0:
+            return
+
         logger.info(f"Performing {self._num_sanity_val_steps} sanity validation steps")
 
         # Store num val steps & temporarily override to num sanity val steps
