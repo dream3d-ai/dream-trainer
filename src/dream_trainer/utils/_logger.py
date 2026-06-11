@@ -1,77 +1,75 @@
-import logging
-import os
-import sys
-from functools import partial
-from typing import Literal, cast
-
-from tqdm import tqdm
-
-LOG_LEVEL = cast(
-    Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-    os.environ.get("LOG_LEVEL", "INFO"),
-)
-LOGGER_NAME = "dream_trainer"
-logger = logging.getLogger(LOGGER_NAME)
+from loguru import logger
 
 
-class _DreamTrainerFormatter(logging.Formatter):
-    """Match the compact elapsed-time format previously used by loguru."""
+def setup_logger():
+    """
+    Sets up Loguru logging pretty
 
-    def format(self, record: logging.LogRecord) -> str:
-        elapsed_ms = int(record.relativeCreated)
-        minutes, remainder = divmod(elapsed_ms, 60_000)
-        seconds, millis = divmod(remainder, 1_000)
-        elapsed = f"{minutes:02}:{seconds:02}.{millis:03}"
-        message = record.getMessage()
+    INFO messages of the form:
+        00:00 | INFO     | Sets up Loguru logging pretty
+    DEBUG messages of the form:
+        00:00 | DEBUG    | dream_trainer.utils:setup_logger:13 - Sets up Loguru debug logging pretty too
+    """
+    import os
+    import sys
+    from functools import partial
+    from typing import Literal, cast
 
-        if record.levelno == logging.DEBUG:
-            return (
-                f"{elapsed} | {record.levelname:<8} | "
-                f"{record.module}:{record.funcName}:{record.lineno} - {message}\n"
-            )
+    from tqdm import tqdm
 
-        return f"{elapsed} | {record.levelname:<8} | {message}\n"
+    os.environ["LOGURU_LEVEL"] = os.environ.get(
+        "LOGURU_LEVEL", os.environ.get("LOG_LEVEL", "INFO")
+    )
+    LOG_LEVEL = cast(
+        Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], os.environ["LOGURU_LEVEL"]
+    )
 
+    def _format_string(record):
+        t = record["elapsed"]
+        elapsed = f"{t.seconds // 60:02}:{t.seconds % 60:02}.{t.microseconds // 1000:03}"
+        return (
+            f"<green>{elapsed}</green> | "
+            f"<level>{record['level']: <8}</level> | "
+            "<level>{message}</level>"
+            "\n"
+        )
 
-class _TqdmLoggingHandler(logging.Handler):
-    """Write logs through tqdm when available so progress bars stay intact."""
+    def _format_debug_string(record):
+        t = record["elapsed"]
+        elapsed = f"{t.seconds // 60:02}:{t.seconds % 60:02}.{t.microseconds // 1000}"
+        return (
+            f"<green>{elapsed}</green> | "
+            f"<level>{record['level']: <8}</level> | "
+            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+            "<level>{message}</level>"
+            "\n"
+        )
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._use_tqdm = os.environ.get("NO_TQDM_WRITE", "0") != "1"
-        self._tqdm_write = partial(tqdm.write, end="") if self._use_tqdm else None
+    if os.environ.get("NO_TQDM_WRITE", "0") == "1":
+        sink = sys.stdout
+    else:
+        # Use TQDM write to log nicely with
+        sink = partial(tqdm.write, end="")
 
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            message = self.format(record)
-            if self._tqdm_write is not None:
-                self._tqdm_write(message)
-            else:
-                sys.stdout.write(message)
-                sys.stdout.flush()
-        except Exception:
-            self.handleError(record)
-
-
-def setup_logger(
-    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = LOG_LEVEL,
-) -> logging.Logger:
-    """Configure dream-trainer's stdlib logger."""
-
-    os.environ["LOG_LEVEL"] = level
-
-    handler = _TqdmLoggingHandler()
-    handler.setLevel(logging.NOTSET)
-    handler.setFormatter(_DreamTrainerFormatter())
-
-    logger.handlers.clear()
-    logger.setLevel(logging._nameToLevel[level])
-    logger.propagate = False
-    logger.addHandler(handler)
-
-    return logger
+    logger.remove()
+    logger.add(
+        sink,
+        format=_format_string,
+        filter=lambda r: r["level"].name != "DEBUG",
+        level=LOG_LEVEL,
+        colorize=True,
+    )
+    logger.add(
+        sink,
+        format=_format_debug_string,
+        filter=lambda r: r["level"].name == "DEBUG",
+        level=LOG_LEVEL,
+        colorize=True,
+    )
 
 
 setup_logger()
 
-__all__ = ["logger", "setup_logger"]
+__all__ = [
+    "logger",
+]

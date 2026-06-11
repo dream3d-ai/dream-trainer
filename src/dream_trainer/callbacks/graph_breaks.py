@@ -2,9 +2,8 @@ from typing import Any, Callable, override
 
 import torch
 import torch.nn as nn
+from loguru import logger
 from tqdm import tqdm
-
-from dream_trainer.utils import logger
 
 from ..trainer.base import BaseTrainer
 from .callback import Callback
@@ -129,7 +128,7 @@ def please_find_graph_breaks(
             finally:
                 _reset_compiled(trainer, name, module)
     if fullgraph:
-        logger.info("Successfully compiled with fullgraph")
+        logger.success("Successfully compiled with fullgraph")
         return
 
     with open(path, "w") as f:
@@ -139,7 +138,7 @@ def please_find_graph_breaks(
             f.write(str(explain).replace(", line ", ":"))  # Formatting for vscode cmd+click
             f.write("\n\n")
 
-    logger.info(f"Wrote graph breaks to {path}")
+    logger.success(f"Wrote graph breaks to {path}")
 
 
 class FindGraphBreaksCallback(Callback[BaseTrainer]):

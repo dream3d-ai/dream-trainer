@@ -114,7 +114,7 @@ def no_fp8(config: DreamTrainerConfig):
     No-ops (with a warning) if the Fp8Quantization callback is not
     installed or already absent from the config.
     """
-    from dream_trainer.utils import logger
+    from loguru import logger
 
     if config.callbacks.pop("Fp8Quantization") is None:
         logger.warning("Fp8Quantization callback not found, skipping")
