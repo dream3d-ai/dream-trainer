@@ -102,9 +102,7 @@ class MediaLoggerCallback(RankZeroCallback[LoggerMixin]):
             return
 
         if self.image_key not in result:
-            raise ValueError(
-                f"Please ensure the key `{self.image_key}` is present in the validation step result dictionary to use the MediaLoggerCallback."
-            )
+            return
 
         if self.caption_key is not None and self.caption_key not in result:
             raise ValueError(

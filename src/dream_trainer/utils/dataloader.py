@@ -133,4 +133,13 @@ def get_val_dataloader_steps(
             f"is greater than the number of batches in the dataloader, {dataloader_length}. "
         )
 
-    return _num_val_batches // dp_size, ceil(num_sanity_val_steps / dp_size)
+    # Ceil so a nonzero request never silently rounds to 0 per rank; 0 stays 0.
+    num_val_steps = ceil(_num_val_batches / dp_size)
+    if 0 < _num_val_batches < dp_size:
+        logger.warning(
+            f"val_steps_per_epoch={_num_val_batches} < dp_size={dp_size}; rounding up to "
+            f"1 step per rank ({dp_size} total val batches). Set val_steps_per_epoch >= dp_size "
+            f"for an exact count."
+        )
+
+    return num_val_steps, ceil(num_sanity_val_steps / dp_size)
