@@ -1,6 +1,6 @@
 [project]
 name = "dream-trainer"
-version = "0.2.0"
+version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [
@@ -9,26 +9,31 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "torch>=2.9.1",
+    "loguru>=0.7.3",
+    "torch>=2.7.1",
     "tqdm>=4.67.1",
 ]
 
 [project.optional-dependencies]
 wandb = [
-    "wandb[media]>=0.26.0",
+    "wandb[media]>=0.22.3",
 ]
 rich = [
     "rich>=14.0.0",
 ]
 metrics = [
-    "torchmetrics>=1.9.0",
+    "torchmetrics>=1.7.1",
 ]
 torchao = [
     "torchao",
 ]
 cli = [
-    "typer>=0.24.1",
-    "rich>=15.0.0",
+    "typer>=0.12",
+    "rich>=14.0.0",
+]
+s3 = [
+    "s3torchconnector[dcp]",
+    "s3torchconnectorclient",
 ]
 
 [dependency-groups]
@@ -42,6 +47,10 @@ docs = [
     "mkdocstrings[python]>=0.29.1",
     "pygments>=2.19.1",
 ]
+
+[tool.uv.sources]
+s3torchconnectorclient = { git = "https://github.com/dream3d-ai/s3-connector-for-pytorch.git", subdirectory = "s3torchconnectorclient", rev = "main" }
+s3torchconnector = { git = "https://github.com/dream3d-ai/s3-connector-for-pytorch.git", subdirectory = "s3torchconnector", rev = "main" }
 
 [build-system]
 requires = ["hatchling"]
