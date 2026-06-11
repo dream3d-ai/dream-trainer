@@ -17,8 +17,9 @@ from dream_trainer.trainer import DreamTrainer
 from dream_trainer.utils import logger
 
 from ..callback import Callback
+from .s3 import S3CheckpointStorage, is_s3_uri, join_s3_uri
 from .types import Checkpoint
-from .utils import find_checkpoints, find_current_checkpoint
+from .utils import find_checkpoints
 
 
 class CheckpointCallback(Callback[DreamTrainer]):
@@ -44,7 +45,16 @@ class CheckpointCallback(Callback[DreamTrainer]):
     ##############
 
     @cached_property
-    def root_dir(self) -> Path:
+    def root_dir(self) -> str | Path:
+        if is_s3_uri(self.config.root_dir):
+            return join_s3_uri(
+                str(self.config.root_dir),
+                self.trainer.project,
+                self.trainer.group,
+                self.trainer.experiment,
+                "checkpoints",
+            )
+
         return (
             Path(self.config.root_dir)
             / self.trainer.project
@@ -52,6 +62,12 @@ class CheckpointCallback(Callback[DreamTrainer]):
             / self.trainer.experiment
             / "checkpoints"
         )
+
+    @cached_property
+    def _checkpoint_storage(self) -> S3CheckpointStorage | None:
+        if not is_s3_uri(self.root_dir):
+            return None
+        return S3CheckpointStorage(str(self.root_dir), self.config.storage_options)
 
     @property
     def should_checkpoint(self) -> bool:
@@ -107,10 +123,17 @@ class CheckpointCallback(Callback[DreamTrainer]):
     # ####################################
 
     def _load(self, checkpoint: Checkpoint, state_dict: dict[str, Any]):
+        checkpoint_path = self._checkpoint_path(checkpoint)
+        load_kwargs: dict[str, Any] = {"checkpoint_id": str(checkpoint_path)}
+        if self._checkpoint_storage is not None:
+            load_kwargs["storage_reader"] = self._checkpoint_storage.reader(
+                checkpoint.checkpoint_id
+            )
+
         logger.info(f"Loading checkpoint {checkpoint.checkpoint_id}")
         dcp.state_dict_loader.load(
             state_dict,
-            checkpoint_id=str(self.root_dir / checkpoint.checkpoint_id),
+            **load_kwargs,
             process_group=self.pg,
             planner=dcp.default_planner.DefaultLoadPlanner(
                 allow_partial_load=not self.config.strict_load
@@ -119,31 +142,71 @@ class CheckpointCallback(Callback[DreamTrainer]):
         logger.info(f"Resumed {self.trainer.experiment} from step {checkpoint.step}")
         self.trainer.world.barrier()
 
-    def _checkpoint_exists(self, checkpoint: Checkpoint):
-        save_path = self.root_dir / checkpoint.checkpoint_id
-        path_exists = torch.tensor([save_path.exists()])
+    def _checkpoint_callback_names(self, checkpoint: Checkpoint) -> set[str]:
+        checkpoint_path = self._checkpoint_path(checkpoint)
+        if self._checkpoint_storage is not None:
+            reader = self._checkpoint_storage.reader(checkpoint.checkpoint_id)
+        else:
+            reader = dcp.FileSystemReader(str(checkpoint_path))
+
+        metadata = reader.read_metadata()
+        prefix = "trainer.callbacks."
+        callback_names: set[str] = set()
+        for key in metadata.state_dict_metadata:
+            if not isinstance(key, str) or not key.startswith(prefix):
+                continue
+            name, *_ = key.removeprefix(prefix).split(".", 1)
+            callback_names.add(name)
+        return callback_names
+
+    def _drop_unloaded_callback_state(
+        self,
+        state_dict: dict[str, Any],
+        loaded_callback_names: set[str],
+    ) -> None:
+        trainer_state = state_dict.get("trainer", {})
+        callbacks_state = trainer_state.get("callbacks", {})
+        for callback_name in tuple(callbacks_state):
+            if callback_name not in loaded_callback_names:
+                callbacks_state.pop(callback_name)
+
+    def _checkpoint_exists(self, checkpoint: Checkpoint) -> bool:
+        if self._checkpoint_storage is not None:
+            exists_on_rank = self._checkpoint_storage.exists(checkpoint.checkpoint_id)
+        else:
+            save_path = self._checkpoint_path(checkpoint)
+            assert isinstance(save_path, Path)
+            exists_on_rank = save_path.exists()
+
+        path_exists = torch.tensor([exists_on_rank])
         dist.broadcast(path_exists, src=0, group=self.pg)
-        if path_exists:
+        exists = bool(path_exists.item())
+        if exists:
             if self.config.resume_mode == "last":
                 raise ValueError(
                     f"Checkpoint {checkpoint.checkpoint_id} already exists, but resume_mode is 'last'. This should never happen."
                 )
-            else:
-                logger.warning(
-                    f"Checkpoint {checkpoint.checkpoint_id} already exists, skipping save."
-                )
+            logger.warning(
+                f"Checkpoint {checkpoint.checkpoint_id} already exists, skipping save."
+            )
 
-        return path_exists
+        return exists
 
     def _save(self, checkpoint: Checkpoint, state_dict: dict[str, Any]):
-        save_path = self.root_dir / checkpoint.checkpoint_id
+        save_path = self._checkpoint_path(checkpoint)
         if self._checkpoint_exists(checkpoint):
             return
+
+        save_kwargs: dict[str, Any] = {"checkpoint_id": str(save_path)}
+        if self._checkpoint_storage is not None:
+            save_kwargs["storage_writer"] = self._checkpoint_storage.writer(
+                checkpoint.checkpoint_id
+            )
 
         logger.info(f"Saving checkpoint {checkpoint.checkpoint_id}")
         dcp.state_dict_saver.save(
             state_dict,
-            checkpoint_id=str(save_path),
+            **save_kwargs,
             process_group=self.pg,
         )
         logger.info(f"Saved checkpoint to {save_path}")
@@ -155,7 +218,9 @@ class CheckpointCallback(Callback[DreamTrainer]):
         gc.collect(generation=1)
 
         state_dict = self.trainer.state_dict()
+        loaded_callback_names = self._checkpoint_callback_names(checkpoint)
         self._load(checkpoint, state_dict)
+        self._drop_unloaded_callback_state(state_dict, loaded_callback_names)
         self.trainer.load_state_dict(
             state_dict,
             strict=self.config.strict_load,
@@ -163,6 +228,7 @@ class CheckpointCallback(Callback[DreamTrainer]):
         )
 
         # Prevent re-saving the loaded checkpoint
+        self._did_resume = True
         self._last_saved_step = self.trainer.global_step
         self._current_metric = None
 
@@ -199,7 +265,8 @@ class CheckpointCallback(Callback[DreamTrainer]):
     @override
     def post_setup(self):
         # Setup paths
-        os.makedirs(self.root_dir, exist_ok=True)
+        if not is_s3_uri(self.root_dir):
+            os.makedirs(self.root_dir, exist_ok=True)
 
         # Setup process group for loading and saving
         self.pg = dist.new_group(backend="gloo")
@@ -211,7 +278,7 @@ class CheckpointCallback(Callback[DreamTrainer]):
     def pre_fit(self):
         # Load a checkpoint if it exists
         logger.info(f"Checkpoint directory: {self.root_dir}")
-        checkpoint = find_current_checkpoint(self.root_dir, self.config.resume_mode)
+        checkpoint = self._current_checkpoint()
         if checkpoint is None:
             logger.info(f"Training {self.trainer.experiment} from scratch")
             return
@@ -253,15 +320,53 @@ class CheckpointCallback(Callback[DreamTrainer]):
         if self.config.checkpoint_every_n_train_epochs is not None and self.should_checkpoint:
             self.save()
 
+    def _stale_checkpoints(self) -> list[Checkpoint]:
+        if self.config.keep_top_k == 0:
+            return []
+
+        checkpoints = self._find_checkpoints()
+        return checkpoints[self.config.keep_top_k :]
+
     def _cleanup_checkpoints(self):
-        checkpoints = find_checkpoints(self.root_dir, self.config.resume_mode)
-        purge_checkpoints = (
-            checkpoints[self.config.keep_top_k :] if self.config.keep_top_k > 0 else []
-        )
+        purge_checkpoints = self._stale_checkpoints()
 
         if self.trainer.world.is_global_zero:
             for checkpoint in purge_checkpoints:
-                print(f"Purging checkpoint {checkpoint.checkpoint_id}")
-                # TODO: Work with cloud storage
-                shutil.rmtree(self.root_dir / checkpoint.checkpoint_id, ignore_errors=True)
+                logger.info(f"Purging checkpoint {checkpoint.checkpoint_id}")
+                if self._checkpoint_storage is not None:
+                    self._checkpoint_storage.delete_checkpoint(checkpoint.checkpoint_id)
+                else:
+                    shutil.rmtree(
+                        self._checkpoint_path(checkpoint),
+                        ignore_errors=True,
+                    )
         self.trainer.world.barrier()
+
+    def _checkpoint_path(self, checkpoint: Checkpoint) -> str | Path:
+        if self._checkpoint_storage is not None:
+            return self._checkpoint_storage.checkpoint_path(checkpoint.checkpoint_id)
+        assert isinstance(self.root_dir, Path)
+        return self.root_dir / checkpoint.checkpoint_id
+
+    def _find_checkpoints(self, mode: Any | None = None) -> list[Checkpoint]:
+        mode = self.config.resume_mode if mode is None else mode
+        if isinstance(mode, int):
+            mode = "last"
+
+        if self._checkpoint_storage is not None:
+            return self._checkpoint_storage.find_checkpoints(mode)
+        assert isinstance(self.root_dir, Path)
+        return find_checkpoints(self.root_dir, mode)
+
+    def _current_checkpoint(self) -> Checkpoint | None:
+        if isinstance(self.config.resume_mode, int):
+            checkpoints = self._find_checkpoints("last")
+            checkpoints = [
+                checkpoint
+                for checkpoint in checkpoints
+                if checkpoint.step == self.config.resume_mode
+            ]
+            return checkpoints[0] if len(checkpoints) == 1 else None
+
+        checkpoints = self._find_checkpoints()
+        return checkpoints[0] if checkpoints else None

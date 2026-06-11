@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from functools import total_ordering
 from pathlib import Path
 
-CHECKPOINT_REGEX = re.compile(r"step=(\d+)__metric=([\d_]+)")
+CHECKPOINT_REGEX = re.compile(r"step=(\d+)__metric=(-?(?:\d+(?:_\d+)?|inf|nan))")
 
 
 @dataclass(kw_only=True)

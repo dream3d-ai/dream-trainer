@@ -17,7 +17,7 @@ Module: `dream_trainer.configs.checkpoint`
 | `keep_top_k` | Number of checkpoint replicas retained. |
 | `strict_load` | Whether load should fail on unmatched state. |
 | `model_weights_only` | Whether model-only behavior is used for weight loads. |
-| `pin_memory` | Whether checkpoint loading pins memory. |
+| `async_mode` | Async save mode: `"disabled"`, `"async"`, or `"async_with_pinned_mem"`. |
 | `resume_data` | Whether dataloader or dataset state should be restored. |
 
 ## Example

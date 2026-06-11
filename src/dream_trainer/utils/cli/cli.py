@@ -20,12 +20,13 @@ subcommand that accepts `**modifiers`.
 
 import os
 from inspect import Parameter, Signature, signature
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Callable, Literal, TypeVar
 
 import typer
+from loguru import logger
 from typer import Option
 
-from dream_trainer.utils import logger
 from dream_trainer.utils.dist.core import get_dist_rank
 from dream_trainer.utils._logger import setup_logger
 from dream_trainer.utils.modifiers import MODIFIERS
@@ -66,6 +67,66 @@ def torch_setup() -> None:
     import warnings
 
     warnings.filterwarnings("ignore", message="Slicing a flattened dim from root mesh")
+
+
+_CHECKPOINT_CALLBACK_NAMES = ("CheckpointCallback", "AsyncCheckpointCallback")
+
+
+def _checkpoint_callback(trainer_config: TrainerConfig):
+    for name in _CHECKPOINT_CALLBACK_NAMES:
+        callback = trainer_config.callbacks.get(name)
+        if callback is not None:
+            return callback
+
+    return None
+
+
+def _resolve_export_checkpoint_path(
+    *,
+    trainer_config: TrainerConfig,
+    checkpoint_path: str | None,
+    run_name: str | None,
+) -> tuple[str | Path, dict[str, Any] | None]:
+    if (checkpoint_path is None) == (run_name is None):
+        raise ValueError("Exactly one of checkpoint_path or run_name must be provided")
+
+    checkpoint_callback = _checkpoint_callback(trainer_config)
+    storage_options = (
+        getattr(checkpoint_callback.config, "storage_options", None)
+        if checkpoint_callback is not None
+        else None
+    )
+
+    if checkpoint_path is not None:
+        return checkpoint_path, storage_options
+
+    if checkpoint_callback is None:
+        raise ValueError("Cannot resolve run_name without a checkpoint callback")
+
+    from dream_trainer.callbacks.checkpoint.s3 import is_s3_uri, join_s3_uri
+
+    assert run_name is not None
+    root_dir = checkpoint_callback.config.root_dir
+    if is_s3_uri(root_dir):
+        return (
+            join_s3_uri(
+                str(root_dir),
+                trainer_config.project,
+                trainer_config.group,
+                run_name,
+                "checkpoints",
+            ),
+            storage_options,
+        )
+
+    return (
+        Path(root_dir)
+        / trainer_config.project
+        / trainer_config.group
+        / run_name
+        / "checkpoints",
+        storage_options,
+    )
 
 
 def cli(main: Callable[[TrainerConfig], None], trainer_config: TrainerConfig) -> None:
@@ -238,8 +299,23 @@ def cli(main: Callable[[TrainerConfig], None], trainer_config: TrainerConfig) ->
         if init_from:
             from dream_trainer.callbacks import LoadPartialCheckpointCallback
 
+            storage_options = None
+            for name in ("CheckpointCallback", "AsyncCheckpointCallback"):
+                checkpoint_callback = trainer_config.callbacks.get(name)
+                if checkpoint_callback is not None:
+                    storage_options = getattr(
+                        checkpoint_callback.config,
+                        "storage_options",
+                        None,
+                    )
+                    break
+
             trainer_config.callbacks.append(
-                LoadPartialCheckpointCallback(init_from, resume_mode="last")
+                LoadPartialCheckpointCallback(
+                    init_from,
+                    resume_mode="last",
+                    storage_options=storage_options,
+                )
             )
 
         if resume:
@@ -492,7 +568,13 @@ def cli(main: Callable[[TrainerConfig], None], trainer_config: TrainerConfig) ->
     @_cli.command(rich_help_panel="Export")
     def export(
         *,
-        checkpoint_path: Annotated[str, Option("--checkpoint-path", help="Checkpoint path")],
+        checkpoint_path: Annotated[
+            str | None, Option("--checkpoint-path", help="Checkpoint path")
+        ] = None,
+        run_name: Annotated[
+            str | None,
+            Option("--run-name", help="Run name to export from"),
+        ] = None,
         output_path: Annotated[
             str, Option("--output-path", help="Path to the output file")
         ] = "export.pt",
@@ -529,6 +611,8 @@ def cli(main: Callable[[TrainerConfig], None], trainer_config: TrainerConfig) ->
         Args:
             checkpoint_path: Experiment directory / DCP checkpoint path to
                 load weights from.
+            run_name: Experiment name to resolve using the configured
+                checkpoint callback root, project, and group.
             output_path: Destination `.pt` file.
             ignore_frozen_params: If `True`, skip any parameter with
                 `requires_grad=False` when building the export.
@@ -563,6 +647,11 @@ def cli(main: Callable[[TrainerConfig], None], trainer_config: TrainerConfig) ->
             "Either resume_mode or resume_step must be provided, not both"
         )
 
+        checkpoint_path, storage_options = _resolve_export_checkpoint_path(
+            trainer_config=trainer_config,
+            checkpoint_path=checkpoint_path,
+            run_name=run_name,
+        )
         trainer_config.callbacks.append(
             ExportCallback(
                 checkpoint_path,
@@ -572,6 +661,7 @@ def cli(main: Callable[[TrainerConfig], None], trainer_config: TrainerConfig) ->
                 ignore_frozen_params,
                 overwrite,
                 resume_mode or resume_step,
+                storage_options=storage_options,
             )
         )
 
