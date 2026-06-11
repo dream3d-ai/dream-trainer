@@ -12,9 +12,9 @@ __pycache__/
 **.safetensors
 **.pkl
 
-build/
-dist/
-wheels/
+/build/
+/dist/
+/wheels/
 *.egg-info
 site/
 

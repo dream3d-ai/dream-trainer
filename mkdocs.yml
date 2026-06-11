@@ -1,6 +1,6 @@
 site_name: dream-trainer
 site_description: "Composable distributed training framework built around PyTorch DTensor abstractions"
-site_url: https://dream3d-ai.github.io/dream-trainer/
+site_url: https://dream3d.ai/trainer
 repo_url: https://github.com/dream3d/dream-trainer
 edit_uri: edit/main/dream-trainer/pages/docs/
 
@@ -58,10 +58,8 @@ nav:
           - Checkpointing: api/configuration/checkpoint.md
       - Utilities:
           - Distributed World: api/utilities/world.md
-          - Distributed Helpers: api/utilities/dist.md
           - Common Utilities: api/utilities/common.md
           - CLI: api/utilities/cli.md
-  - llms.txt: llms.txt
 
 theme:
   name: shadcn
@@ -141,7 +139,6 @@ markdown_extensions:
       custom_fences:
         - name: mermaid
           class: mermaid
-          format: !!python/name:pymdownx.superfences.fence_div_format
   - pymdownx.tabbed
   - pymdownx.tasklist:
       custom_checkbox: true
@@ -155,10 +152,6 @@ markdown_extensions:
 extra_css:
   - stylesheets/pygments-syntax.css
   - stylesheets/shadcn-overrides.css
-
-extra_javascript:
-  - https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js
-  - javascripts/mermaid.js
 
 # Watch for changes in includes directory
 watch:
