@@ -1,14 +1,13 @@
 from typing import Any, override
 
 import torch
-from torch.distributed.tensor import DTensor
 from torch.optim.swa_utils import get_ema_multi_avg_fn
 
 from dream_trainer.trainer import DreamTrainer
 from dream_trainer.utils import logger
 
-from .averaged_model import EMA
 from ..callback import Callback
+from .averaged_model import EMA
 
 
 class EMACallback(Callback[DreamTrainer]):
@@ -51,9 +50,14 @@ class EMACallback(Callback[DreamTrainer]):
         # State
         self.ema_models: dict[str, EMA] = {}
         self._validation_backup: dict[str, dict[str, dict[str, torch.Tensor]]] = {}
+        self._loaded_from_state_dict = False
 
     @override
     def post_setup(self):
+        self._initialize_ema_models(n_averaged=1)
+
+    def _initialize_ema_models(self, *, n_averaged: int):
+        self.ema_models = {}
         named_models = self.trainer.named_models()
         for model_name in self.model_names:
             if model_name not in named_models:
@@ -66,20 +70,35 @@ class EMACallback(Callback[DreamTrainer]):
                 device=torch.device("cpu") if self.cpu_offload else None,
                 use_buffers=self.use_buffers,
             )
-            ema_model.initialize_from_model(model, n_averaged=1)
+            ema_model.initialize_from_model(model, n_averaged=n_averaged)
 
             self.ema_models[model_name] = ema_model
 
             logger.info(f"Created EMA model for '{model_name}' with decay={self.decay}")
 
     @override
-    def post_train_step(self, batch: dict[str, Any], batch_idx: int):
+    def post_load_state_dict(self, loaded_callback_names: set[str]):
+        del loaded_callback_names
+        if self._loaded_from_state_dict:
+            self._loaded_from_state_dict = False
+            return
+
+        self._initialize_ema_models(n_averaged=1)
+        logger.info(
+            "Initialized EMA state from loaded model weights because no EMA state was "
+            "present in the checkpoint"
+        )
+
+    @override
+    def post_optimizer_step(self, model: torch.nn.Module, optimizer: torch.optim.Optimizer):
         if (
             self.trainer.global_step >= self.start_step
             and (self.trainer.global_step + 1) % self.update_every_n_steps == 0
         ):
             for model_name in self.model_names:
-                model = self.trainer.get_model(model_name)
+                if self.trainer.get_model(model_name) is not model:
+                    continue
+
                 ema_model = self.ema_models[model_name]
 
                 # Update EMA model parameters
@@ -93,12 +112,10 @@ class EMACallback(Callback[DreamTrainer]):
             model = self.trainer.get_model(model_name)
             self._validation_backup[model_name] = {
                 "parameters": {
-                    name: (param.to_local() if isinstance(param, DTensor) else param).detach().clone()
-                    for name, param in model.named_parameters()
+                    name: param.detach().clone() for name, param in model.named_parameters()
                 },
                 "buffers": {
-                    name: (buffer.to_local() if isinstance(buffer, DTensor) else buffer).detach().clone()
-                    for name, buffer in model.named_buffers()
+                    name: buffer.detach().clone() for name, buffer in model.named_buffers()
                 },
             }
             self.ema_models[model_name].copy_to(model)
@@ -110,12 +127,10 @@ class EMACallback(Callback[DreamTrainer]):
             backup = self._validation_backup.pop(model_name)
 
             for name, param in model.named_parameters():
-                local_param = param.to_local() if isinstance(param, DTensor) else param
-                local_param.copy_(backup["parameters"][name], non_blocking=True)
+                param.copy_(backup["parameters"][name], non_blocking=True)
 
             for name, buffer in model.named_buffers():
-                local_buffer = buffer.to_local() if isinstance(buffer, DTensor) else buffer
-                local_buffer.copy_(backup["buffers"][name], non_blocking=True)
+                buffer.copy_(backup["buffers"][name], non_blocking=True)
 
         return result
 
@@ -156,3 +171,4 @@ class EMACallback(Callback[DreamTrainer]):
         ema_models = state_dict.pop("ema_models")
         for model_name, ema_model in ema_models.items():
             self.ema_models[model_name].load_state_dict(ema_model)
+        self._loaded_from_state_dict = True

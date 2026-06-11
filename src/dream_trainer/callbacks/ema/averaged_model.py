@@ -14,10 +14,10 @@ from torch.utils._foreach_utils import (
 
 class EMA(Stateful):
     """
-    EMA state that tracks a model's local parameter shards instead of cloning the module.
+    EMA state that tracks a model's parameters and buffers without cloning the module.
 
-    This works with replicated modules and FSDP2/DTensor-backed modules because each rank
-    stores and updates only the local tensor it owns for each parameter or buffer.
+    DTensor-backed parameters stay as DTensors so distributed checkpointing can preserve
+    their sharded layout.
     """
 
     n_averaged: Tensor
@@ -115,23 +115,28 @@ class EMA(Stateful):
         self.n_averaged.add_(1)
 
     def _new_tensor(self, tensor: Tensor) -> Tensor:
-        local_tensor = tensor.to_local() if isinstance(tensor, DTensor) else tensor
-        out = torch.zeros_like(
-            local_tensor, device=self.device if self.device is not None else None
-        )
-        return out
+        if isinstance(tensor, DTensor):
+            return torch.zeros_like(
+                tensor, device=self.device if self.device is not None else None
+            )
+
+        return torch.zeros_like(tensor, device=self.device if self.device is not None else None)
 
     def _copy_tensor(self, dst: Tensor, src: Tensor):
-        dst.copy_(src.to(device=dst.device, dtype=dst.dtype), non_blocking=True)
+        dst.copy_(
+            src.to(device=dst.device, dtype=dst.dtype, non_blocking=True),
+            non_blocking=True,
+        )
 
     def _copy_from_model_tensor(self, dst: Tensor, src: Tensor):
-        local_src = src.to_local() if isinstance(src, DTensor) else src
-        dst.copy_(local_src.detach().to(device=dst.device, dtype=dst.dtype), non_blocking=True)
+        dst.copy_(
+            src.detach().to(device=dst.device, dtype=dst.dtype, non_blocking=True),
+            non_blocking=True,
+        )
 
     def _copy_to_model_tensor(self, dst: Tensor, src: Tensor):
-        local_dst = dst.to_local() if isinstance(dst, DTensor) else dst
-        local_dst.copy_(
-            src.detach().to(device=local_dst.device, dtype=local_dst.dtype),
+        dst.copy_(
+            src.detach().to(device=dst.device, dtype=dst.dtype, non_blocking=True),
             non_blocking=True,
         )
 
@@ -159,25 +164,24 @@ class EMA(Stateful):
 
         for name, tracked in tracked_tensors.items():
             source = model_tensors[name]
-            local_source = source.to_local() if isinstance(source, DTensor) else source
-            local_source = local_source.detach().to(
+            source = source.detach().to(
                 device=tracked.device,
                 dtype=tracked.dtype,
                 non_blocking=True,
             )
 
             if self.n_averaged.item() == 0:
-                tracked.copy_(local_source, non_blocking=True)
+                tracked.copy_(source, non_blocking=True)
                 continue
 
             if not use_ema or not (
                 torch.is_floating_point(tracked) or torch.is_complex(tracked)
             ):
-                tracked.copy_(local_source, non_blocking=True)
+                tracked.copy_(source, non_blocking=True)
                 continue
 
             tracked_detached.append(tracked.detach())
-            model_detached.append(local_source)
+            model_detached.append(source)
 
         if not tracked_detached:
             return
