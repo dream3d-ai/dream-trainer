@@ -1,0 +1,506 @@
+.site-logo {
+  display: inline-block;
+  height: 1rem;
+  aspect-ratio: 319 / 225;
+  background-color: currentColor;
+  -webkit-mask-image: url("../assets/black.svg");
+          mask-image: url("../assets/black.svg");
+  -webkit-mask-size: contain;
+          mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+          mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+          mask-position: center;
+}
+
+.task-list {
+  list-style: none;
+  padding-left: 0;
+}
+
+.task-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  margin-block: 0.65rem;
+  list-style: none;
+}
+
+.task-list-item::marker {
+  content: "";
+}
+
+.task-list-item > input[type="checkbox"] {
+  flex: 0 0 auto;
+  margin-top: 0.35rem;
+}
+
+article .typography h2 {
+  margin-top: calc(var(--spacing) * 14);
+}
+
+article .typography h2 + p {
+  margin-top: calc(var(--spacing) * 4) !important;
+}
+
+article .typography h3 {
+  margin-top: calc(var(--spacing) * 9);
+}
+
+article .typography h4 {
+  margin-top: calc(var(--spacing) * 7);
+}
+
+article .typography > h2:first-child,
+article .typography > div:first-child > h2 {
+  margin-top: 0;
+}
+
+/* Tighten the space between the page header (title + datetime row) and
+   the first body element. The shadcn page template stacks a datetime
+   row with pt-4 above the typography block, and the first paragraph
+   inherits a default top margin — together they produce a visible gap
+   on any page that doesn't open with an h2. */
+article > div.flex.flex-col > div.flex.justify-end.items-center > div {
+  padding-top: calc(var(--spacing) * 1);
+}
+
+article .typography > :first-child,
+article .typography > div:first-child > :first-child {
+  margin-top: 0;
+}
+
+article p:not(:first-child),
+article .typography > div:not(:first-child),
+article blockquote,
+article .tabbed-set:first-of-type {
+  margin-top: calc(var(--spacing) * 6);
+}
+
+article ul,
+article ol {
+  margin-block: calc(var(--spacing) * 6);
+}
+
+article ul > li,
+article ol > li {
+  margin-top: calc(var(--spacing) * 3);
+  line-height: 1.65;
+}
+
+article li ul,
+article li ol {
+  margin-top: calc(var(--spacing) * 3);
+}
+
+/* Admonition lists carry short, dense summaries — give them extra room so
+   multi-line bullets with inline code chips don't feel packed together. */
+article .admonition ul > li,
+article .admonition ol > li {
+  margin-top: calc(var(--spacing) * 3);
+  line-height: 1.65;
+}
+
+article .admonition ul > li:first-child,
+article .admonition ol > li:first-child {
+  margin-top: calc(var(--spacing) * 2);
+}
+
+article,
+article .highlight,
+article pre,
+article table {
+  min-width: 0;
+  max-width: 100%;
+}
+
+article .highlight,
+article pre,
+article table {
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+article .highlight,
+article pre {
+  border-radius: 0.5rem;
+}
+
+article pre {
+  margin-top: calc(var(--spacing) * 6);
+  margin-bottom: calc(var(--spacing) * 5);
+  padding-inline: calc(var(--spacing) * 4);
+  padding-block: calc(var(--spacing) * 3);
+}
+
+article .codehilite,
+article .highlight {
+  margin-top: calc(var(--spacing) * 5);
+}
+
+article table {
+  display: block;
+  width: 100%;
+}
+
+article .highlight pre {
+  border-radius: inherit;
+  margin-block: 0;
+  margin-inline: 0;
+}
+
+article pre code {
+  white-space: pre;
+}
+
+/* ---------------------------------------------------------------------------
+   Reading width + rhythm
+   --------------------------------------------------------------------------- */
+
+/* Constrain prose line length. Code blocks, tables, admonitions, tabbed
+   containers, and figures keep full width so they can carry wide content. */
+article .typography > p,
+article .typography > ul,
+article .typography > ol,
+article .typography > blockquote,
+article .typography > h1,
+article .typography > h2,
+article .typography > h3,
+article .typography > h4,
+article .typography > h5,
+article .typography > h6,
+article .typography > dl {
+  max-width: 74ch;
+}
+
+/* Slightly tighter lines inside admonitions so the box itself can be wider
+   than bare prose without making the sentences feel long. */
+article .admonition p,
+article .admonition li {
+  max-width: none;
+}
+
+/* More air between major sibling blocks. The default 4×spacing between
+   consecutive paragraphs made dense pages feel like walls of text. */
+article .typography > p + p,
+article .typography > ul + p,
+article .typography > ol + p,
+article .typography > p + ul,
+article .typography > p + ol {
+  margin-top: calc(var(--spacing) * 7);
+}
+
+/* Sharper heading hierarchy. The default h2/h3 sizes were nearly identical,
+   which flattened section structure on long pages. */
+article .typography h2 {
+  font-size: 1.75rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  padding-bottom: calc(var(--spacing) * 2);
+  border-bottom: 1px solid var(--border);
+}
+
+article .typography h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+article .typography h4 {
+  font-size: 1rem;
+  font-weight: 600;
+  text-transform: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Admonitions (note / tip / warning / abstract / info / danger)
+   --------------------------------------------------------------------------- */
+
+article .admonition {
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 0.5rem;
+  padding: calc(var(--spacing) * 4) calc(var(--spacing) * 5);
+  margin-block: calc(var(--spacing) * 7);
+  background: color-mix(in oklab, var(--muted) 40%, transparent);
+}
+
+article .admonition > p:first-child,
+article .admonition > .admonition-title {
+  margin-top: 0 !important;
+  font-weight: 600;
+  font-size: 0.9rem;
+  letter-spacing: 0.01em;
+  color: var(--foreground);
+}
+
+article .admonition > :last-child {
+  margin-bottom: 0;
+}
+
+article .admonition > p + p,
+article .admonition > .admonition-title + * {
+  margin-top: calc(var(--spacing) * 4) !important;
+}
+
+article .admonition.note,
+article .admonition.info {
+  border-left-color: var(--primary);
+}
+
+article .admonition.tip,
+article .admonition.success {
+  border-left-color: #16a34a;
+}
+
+article .admonition.warning,
+article .admonition.caution {
+  border-left-color: #d97706;
+}
+
+article .admonition.danger,
+article .admonition.error,
+article .admonition.bug {
+  border-left-color: #dc2626;
+}
+
+article .admonition.abstract,
+article .admonition.summary,
+article .admonition.tldr {
+  border-left-color: var(--primary);
+  background: color-mix(in oklab, var(--primary) 6%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+   Tables: turn scroll-overflow block into a proper table layout
+   --------------------------------------------------------------------------- */
+
+article .typography table {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+  margin-block: calc(var(--spacing) * 7);
+  font-size: 0.95em;
+}
+
+article .typography table th,
+article .typography table td {
+  padding: calc(var(--spacing) * 3) calc(var(--spacing) * 3);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  line-height: 1.6;
+}
+
+article .typography table th {
+  font-weight: 600;
+  background: color-mix(in oklab, var(--muted) 50%, transparent);
+  border-bottom-width: 2px;
+}
+
+article .typography table tr:last-child td {
+  border-bottom: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Tabbed content (pymdownx.tabbed)
+   --------------------------------------------------------------------------- */
+
+article .tabbed-set {
+  margin-block: calc(var(--spacing) * 7);
+}
+
+article .tabbed-labels {
+  border-bottom: 1px solid var(--border);
+}
+
+article .tabbed-labels > label {
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+  font-weight: 500;
+  color: color-mix(in oklab, var(--foreground) 70%, transparent);
+  cursor: pointer;
+}
+
+article .tabbed-set > input:checked + label {
+  color: var(--foreground);
+  border-bottom: 2px solid var(--primary);
+  margin-bottom: -1px;
+}
+
+article .tabbed-content {
+  padding-top: calc(var(--spacing) * 5);
+}
+
+/* ---------------------------------------------------------------------------
+   Page metadata row ( <small>🎓 Tutorial · ~20 min · 1 GPU</small> )
+   --------------------------------------------------------------------------- */
+
+article .typography > p:has(> small:only-child) {
+  margin-top: calc(var(--spacing) * 2) !important;
+  margin-bottom: calc(var(--spacing) * 8);
+  padding-bottom: calc(var(--spacing) * 4);
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+}
+
+article .typography > p > small:only-child {
+  display: inline-block;
+  font-size: 0.95rem;
+  color: color-mix(in oklab, var(--foreground) 65%, transparent);
+  letter-spacing: 0.01em;
+  line-height: 1.6;
+}
+
+/* Give the separator dots breathing room so "Tutorial · ~20 min · 1 GPU"
+   doesn't collapse into a single run. */
+article .typography > p > small:only-child {
+  word-spacing: 0.15em;
+}
+
+/* ---------------------------------------------------------------------------
+   Home page: hero, card grid, CTAs
+   --------------------------------------------------------------------------- */
+
+header a[href$="/trainer/"] > span.size-8:first-child {
+  background: url("../assets/brand/dream-trainer-mark.svg") center / 1.55rem 1.55rem
+    no-repeat;
+}
+
+header a[href$="/trainer/"] > span.size-8:first-child svg {
+  opacity: 0;
+}
+
+article .typography .brand-lockup-frame {
+  margin-top: 0;
+  margin-bottom: calc(var(--spacing) * 7);
+  max-width: none;
+}
+
+article .typography .brand-lockup {
+  display: block;
+  width: min(100%, 26rem);
+  height: auto;
+}
+
+html.dark article .typography .brand-lockup {
+  filter: brightness(1.12) saturate(1.04);
+}
+
+article .typography .home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: calc(var(--spacing) * 4);
+  margin-block: calc(var(--spacing) * 7);
+  max-width: none;
+}
+
+article .typography .home-card {
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: calc(var(--spacing) * 5) calc(var(--spacing) * 5);
+  background: color-mix(in oklab, var(--muted) 25%, transparent);
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--spacing) * 3);
+  max-width: none;
+}
+
+article .typography .home-card:hover {
+  border-color: color-mix(in oklab, var(--primary) 60%, var(--border));
+  background: color-mix(in oklab, var(--muted) 40%, transparent);
+}
+
+article .typography .home-card > h3 {
+  margin-top: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+article .typography .home-card > p {
+  margin-top: 0;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: color-mix(in oklab, var(--foreground) 78%, transparent);
+  max-width: none;
+}
+
+article .typography .home-card > p:last-child > a {
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+article .typography a.home-cta,
+article .typography a.home-cta-ghost {
+  display: inline-flex;
+  align-items: center;
+  padding: calc(var(--spacing) * 2) calc(var(--spacing) * 4);
+  border-radius: 0.5rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+  text-decoration: none;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+article .typography a.home-cta {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+article .typography a.home-cta:hover {
+  background: color-mix(in oklab, var(--primary) 88%, black);
+}
+
+article .typography a.home-cta-ghost {
+  border: 1px solid var(--border);
+  color: var(--foreground);
+}
+
+article .typography a.home-cta-ghost:hover {
+  border-color: color-mix(in oklab, var(--primary) 60%, var(--border));
+  background: color-mix(in oklab, var(--muted) 40%, transparent);
+}
+
+/* Hero H1 on the landing page — the default h1 size is small for a hero. */
+article .typography > h1:first-child {
+  font-size: 2.5rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  margin-bottom: calc(var(--spacing) * 5);
+}
+
+/* The theme renders <p id="summary"> from front-matter `summary:` above the
+   typography block. Default is small + muted; for a landing hero we want it
+   bigger and wider so it reads as a proper subtitle. */
+article #summary {
+  font-size: 1.25rem !important;
+  line-height: 1.55;
+  max-width: 68ch;
+  text-wrap: balance;
+  margin-top: calc(var(--spacing) * 3);
+}
+
+/* The page-header h1 itself — bump up the hero size when the summary is
+   present (landing-style pages). */
+#page-header h1 {
+  font-size: 3rem;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+/* ---------------------------------------------------------------------------
+   Inline code: subtle background so it reads as code in prose
+   --------------------------------------------------------------------------- */
+
+article .typography :not(pre) > code {
+  background: color-mix(in oklab, var(--muted) 60%, transparent);
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+  font-size: 0.9em;
+  border: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+}
