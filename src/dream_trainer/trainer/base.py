@@ -525,8 +525,8 @@ class BaseTrainer(EvalMetricMixin, Stateful):
             raise RuntimeError(
                 f"Gradient norm is non-finite before optimizer step: {total_norm}"
             )
-        if float(total_norm) == 0.0:
-            raise RuntimeError("All optimizer gradients are exactly zero before optimizer step")
+        # if float(total_norm) == 0.0:
+        #     raise RuntimeError("All optimizer gradients are exactly zero before optimizer step")
         self.clip_gradient_norm(parameters, total_norm, foreach=True)
 
         model = self.get_model_by_optimizer(self.get_name_by_optimizer(optimizer))

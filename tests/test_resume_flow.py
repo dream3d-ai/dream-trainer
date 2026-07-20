@@ -171,6 +171,9 @@ def test_training_epoch_raises_when_dataloader_ends_early():
     trainer._num_gradient_accumulation_steps = 1
     trainer._train_dataloader = [{"x": torch.tensor(1.0)}]
     trainer.training_parameters = SimpleNamespace(val_every_n_steps=100)
+    trainer.device_parameters = SimpleNamespace(
+        comm=SimpleNamespace(train_timeout_seconds=123)
+    )
     trainer.world = SimpleNamespace(
         device=torch.device("cpu"),
         barrier=lambda: None,
@@ -199,3 +202,42 @@ def test_training_epoch_raises_when_dataloader_ends_early():
         BaseTrainer.perform_training_epoch(trainer)
 
     assert post_train_epoch_calls == []
+
+
+def test_training_epoch_sets_train_timeout_once_during_accumulation():
+    trainer = object.__new__(MinimalTrainer)
+    trainer._num_train_batches = 3
+    trainer._num_gradient_accumulation_steps = 4
+    trainer._train_dataloader = [{"x": torch.tensor(1.0)} for _ in range(3)]
+    trainer.training_parameters = SimpleNamespace(val_every_n_steps=100)
+    trainer.device_parameters = SimpleNamespace(
+        comm=SimpleNamespace(train_timeout_seconds=123)
+    )
+    timeout_calls = []
+    trainer.world = SimpleNamespace(
+        device=torch.device("cpu"),
+        barrier=lambda: None,
+        train_context=lambda: contextlib.nullcontext(),
+        set_pg_timeouts=lambda timeout: timeout_calls.append(timeout),
+        world_mesh=None,
+    )
+    trainer.callbacks = SimpleNamespace(
+        pre_train_epoch=lambda: None,
+        pre_train_step=lambda batch, batch_idx: None,
+        train_context=lambda: [],
+        post_train_step=lambda result, batch_idx: None,
+        post_train_epoch=lambda result: None,
+    )
+    trainer.named_models = lambda: {}
+    trainer.training_step = lambda batch, batch_idx: {"loss": torch.tensor(1.0)}
+    trainer.pre_train_step = lambda batch, batch_idx: batch
+    trainer.train = lambda: None
+    trainer.perform_validation_epoch = lambda: None
+    trainer.local_batches = 0
+    trainer.global_step = 0
+    trainer._local_step = 0
+
+    BaseTrainer.perform_training_epoch(trainer)
+
+    assert len(timeout_calls) == 1
+    assert timeout_calls[0].total_seconds() == 123
