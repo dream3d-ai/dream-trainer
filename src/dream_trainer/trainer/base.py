@@ -96,6 +96,7 @@ class BaseTrainer(EvalMetricMixin, Stateful):
 
         self.training = False
         self._local_step = 0
+        self._train_pg_timeout_reduced = False
         self.is_sanity_validation = False
 
     ###########################
@@ -744,17 +745,18 @@ class BaseTrainer(EvalMetricMixin, Stateful):
                     self.perform_validation_epoch()
                     self.train()
 
+                # Reduce timeout after the first optimizer step, once lazy init,
+                # compilation, and the initial synchronized backward are finished.
+                if not self._train_pg_timeout_reduced:
+                    self.world.set_pg_timeouts(
+                        timeout=dt.timedelta(
+                            seconds=self.device_parameters.comm.train_timeout_seconds,
+                        ),
+                    )
+                    self._train_pg_timeout_reduced = True
+
             self.local_batches += 1
             batch_idx += 1
-
-            # Reduce timeout after first train step for faster signal
-            # (assuming lazy init and compilation are finished)
-            if self._local_step == 0:
-                self.world.set_pg_timeouts(
-                    timeout=dt.timedelta(
-                        seconds=1_800,  # self.device_parameters.comm.train_timeout_seconds,
-                    ),
-                )
 
         if batch_idx < self._num_train_batches:
             rank = (
