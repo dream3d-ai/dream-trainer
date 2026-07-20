@@ -196,18 +196,18 @@ class ModelSetupMixin(AbstractTrainer):
                 if tensor.is_meta:
                     meta_tensors.append(f"{model_name}.{tensor_name}")
                     continue
-                if (torch.is_floating_point(tensor) or torch.is_complex(tensor)) and not torch.isfinite(
-                    tensor
-                ).all():
+                if (
+                    torch.is_floating_point(tensor) or torch.is_complex(tensor)
+                ) and not torch.isfinite(tensor).all():
                     nonfinite_tensors.append(f"{model_name}.{tensor_name}")
 
             for tensor_name, tensor in model.named_buffers():
                 if tensor.is_meta:
                     meta_tensors.append(f"{model_name}.{tensor_name}")
                     continue
-                if (torch.is_floating_point(tensor) or torch.is_complex(tensor)) and not torch.isfinite(
-                    tensor
-                ).all():
+                if (
+                    torch.is_floating_point(tensor) or torch.is_complex(tensor)
+                ) and not torch.isfinite(tensor).all():
                     nonfinite_tensors.append(f"{model_name}.{tensor_name}")
 
         if meta_tensors or nonfinite_tensors:
@@ -552,6 +552,11 @@ class ModelSetupMixin(AbstractTrainer):
         #     "All parameters that require gradients must be wrapped with fully_shard (or replicate if using DDP). "
         #     f"Unwrapped parameters: {unwrapped}"
         # )
+
+        # Run gradient reduce-scatter on its own process group so it can overlap with all-gather in the backward pass
+        for model in self.named_models().values():
+            if isinstance(model, FSDPModule):
+                model.set_separate_reduce_scatter_group(enable=True, recurse=True)
 
     def _collect_parameter_fqns(self, predicate: Callable[[nn.Module], bool]) -> set[str]:
         """
