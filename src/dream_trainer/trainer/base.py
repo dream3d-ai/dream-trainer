@@ -98,6 +98,7 @@ class BaseTrainer(EvalMetricMixin, Stateful):
         self._local_step = 0
         self._train_pg_timeout_reduced = False
         self.is_sanity_validation = False
+        self.stop_requested = False
 
     ###########################
     # AbstractTrainer Methods #
@@ -757,8 +758,10 @@ class BaseTrainer(EvalMetricMixin, Stateful):
 
             self.local_batches += 1
             batch_idx += 1
+            if getattr(self, "stop_requested", False):
+                break
 
-        if batch_idx < self._num_train_batches:
+        if batch_idx < self._num_train_batches and not getattr(self, "stop_requested", False):
             rank = (
                 self.world.world_mesh.get_rank()
                 if self.world.world_mesh is not None
@@ -985,6 +988,8 @@ class BaseTrainer(EvalMetricMixin, Stateful):
             self.callbacks.post_epoch()
 
             self.current_epoch += 1
+            if getattr(self, "stop_requested", False):
+                break
 
         # Fit End
         self.callbacks.post_fit()
