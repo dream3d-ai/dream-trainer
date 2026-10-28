@@ -1,0 +1,25 @@
+{
+  "command": [
+    "/home/tony/workspace/dream3d/.venv/bin/python",
+    "-m",
+    "torch.distributed.run",
+    "--standalone",
+    "--nproc-per-node=2",
+    "dream-trainer/benchmarks/native_upgrade.py",
+    "/tmp/gst-speed-fineweb-20260924.pt",
+    "/tmp/dream-trainer-native-upgrade/matrix/baseline-2.json",
+    "--steps",
+    "128",
+    "--warmup",
+    "16",
+    "--backend",
+    "nccl"
+  ],
+  "environment": {
+    "PYTHONPATH": "/tmp/dream-trainer-native-upgrade/baseline/dream-trainer/src",
+    "OMP_NUM_THREADS": "1",
+    "TORCHINDUCTOR_COMPILE_THREADS": "8",
+    "TORCHINDUCTOR_CACHE_DIR": "/tmp/dream-trainer-native-upgrade/matrix/baseline-2-inductor",
+    "TRITON_CACHE_DIR": "/tmp/dream-trainer-native-upgrade/matrix/baseline-2-triton"
+  }
+}

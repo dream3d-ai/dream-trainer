@@ -4,7 +4,7 @@
     - **Trainer returns scalars. Callbacks log them.** Don't call `wandb.log` directly from your trainer.
     - Assign `MetricCollection` / `Metric` objects in `configure_metrics` — Dream Trainer moves, resets, and computes them for you.
     - Default stack: `LoggerCallback` (scalars) + `LRLoggerCallback` (learning rates) + `ProgressBar` (local) + `MediaLoggerCallback` (images/video).
-    - Logging runs on global rank 0 only — keep media sample-limited.
+    - Training scalars are reduced across microbatches and data-parallel ranks; only global rank 0 writes logs.
 
 Dream Trainer separates metric **computation** from metric **logging**. Trainers update metrics and return scalar logs; callbacks decide where those values go.
 
@@ -30,14 +30,35 @@ return {
 }
 ```
 
-`LoggerCallback` filters returned dictionaries to numeric scalar values and calls the trainer's `log_dict` method.
+`LoggerCallback` filters returned dictionaries to numeric scalar values. By default,
+it logs once after each completed gradient update, averaging all microbatches in that
+update across data-parallel ranks. For example, with 128 accumulation microbatches,
+128 returned losses become one mean loss at `trainer/global_step=1`.
+
+Each metric has its own observation count: a gradient norm returned only at the
+update boundary is not divided by 128. Accumulation uses detached FP32 values,
+and host conversion and data-parallel reduction happen at logging time.
 
 ```python
-callbacks.LoggerCallback(log_every_n_train_batches=8)
+callbacks.LoggerCallback()  # Every completed gradient update
+callbacks.LoggerCallback(log_every_n_train_steps=8)  # Mean over 8 updates
 ```
 
 !!! warning "Throughput note"
-    Use a lower logging frequency for fast training loops to avoid per-step logging overhead. `log_every_n_train_batches=8` is a reasonable baseline.
+    Use a larger `log_every_n_train_steps` for fast training loops. The old
+    `log_every_n_train_batches` keyword remains as a deprecated alias, but its
+    interval now counts gradient updates rather than microbatches.
+
+Returned scalars are treated as equally weighted observations, matching the
+trainer's equal weighting of microbatch losses during backward. This is not a
+token-weighted or sample-weighted average for variable-size batches. Every scalar
+uses mean reduction, including metrics named `min` or `max`; these become means
+of the reported batch extrema. Missing keys are excluded from that metric's count.
+
+An epoch ending on an update boundary flushes any shorter logging interval.
+An unfinished accumulation window is not logged as a completed update. The last
+training microbatch is no longer emitted again as an epoch metric. Validation
+logging and direct `trainer.log_dict(...)` calls keep their existing behavior.
 
 ## Metrics
 
@@ -68,8 +89,8 @@ Metric names are prefixed by the trainer attribute name. A collection assigned t
 
 | Callback | Purpose |
 | --- | --- |
-| `LoggerCallback` | Records scalar step/epoch values. Optionally logs source code via `code_dir=...`. |
-| `LRLoggerCallback` | Logs optimizer learning rates each step. |
+| `LoggerCallback` | Records averaged training-update scalars and validation values. Optionally logs source code via `code_dir=...`. |
+| `LRLoggerCallback` | Logs rates used by the optimizers once per completed update, before scheduler changes. |
 | `MediaLoggerCallback` | Logs images, videos, and figure artifacts from validation. |
 | `MetricLoggerCallback` | Publishes computed metric-collection outputs to the logger mixin. |
 | `ModelWatchCallback` | WandB `wandb.watch` integration for weights/gradient histograms. |

@@ -1,0 +1,90 @@
+{
+  "baseline": {
+    "first_update_seconds": {
+      "median": 63.10535235295538,
+      "min": 63.01421135396231,
+      "max": 63.6028870199807
+    },
+    "tokens_per_second": {
+      "median": 12889.54242673308,
+      "min": 12221.203580710342,
+      "max": 14274.954771397835
+    },
+    "peak_allocated_bytes": {
+      "median": 453988864,
+      "min": 453988864,
+      "max": 453988864
+    },
+    "host_scalar_reads": {
+      "median": 161,
+      "min": 161,
+      "max": 161
+    }
+  },
+  "native": {
+    "first_update_seconds": {
+      "median": 63.884400355047546,
+      "min": 63.864073814009316,
+      "max": 64.09799910802394
+    },
+    "tokens_per_second": {
+      "median": 14694.548534242193,
+      "min": 14354.526887368334,
+      "max": 14856.461538454685
+    },
+    "peak_allocated_bytes": {
+      "median": 453988864,
+      "min": 453988864,
+      "max": 453988864
+    },
+    "host_scalar_reads": {
+      "median": 98,
+      "min": 98,
+      "max": 98
+    }
+  },
+  "cached": {
+    "first_update_seconds": {
+      "median": 21.303528415970504,
+      "min": 21.178766353055835,
+      "max": 21.34791765094269
+    },
+    "tokens_per_second": {
+      "median": 15243.255204182551,
+      "min": 14878.311029211247,
+      "max": 15532.829605844845
+    },
+    "peak_allocated_bytes": {
+      "median": 453988864,
+      "min": 453988864,
+      "max": 453988864
+    },
+    "host_scalar_reads": {
+      "median": 98,
+      "min": 98,
+      "max": 98
+    }
+  },
+  "nccl2": {
+    "first_update_seconds": {
+      "median": 63.86011548899114,
+      "min": 63.753349908976816,
+      "max": 64.10417581303045
+    },
+    "tokens_per_second": {
+      "median": 15418.959823119381,
+      "min": 13952.916098618793,
+      "max": 15610.42577979598
+    },
+    "peak_allocated_bytes": {
+      "median": 509990400,
+      "min": 487114752,
+      "max": 515117056
+    },
+    "host_scalar_reads": {
+      "median": 98,
+      "min": 98,
+      "max": 98
+    }
+  }
+}
